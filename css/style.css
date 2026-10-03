@@ -1,0 +1,1159 @@
+/* ============================================================================
+ * Remiku — style.css
+ * Gaya: Neo-Brutalism (border hitam, offset shadow, pink sebagai aksen utama).
+ * Mobile-first, target utama: NYAMAN DIPAKAI DI HP sebagai papan skor.
+ *
+ * Hierarki visual dijaga ketat (tidak semua elemen ber-border/shadow tebal):
+ *   1. Kartu pemain ....... border 4px + shadow 6px
+ *   2. Skor ............... elemen teks terbesar, tanpa shadow
+ *   3. Tombol primer ...... border 3px + shadow 4px (pink)
+ *   4. Tombol sekunder .... border 3px + shadow 3px
+ *   5. Input .............. border 3px + shadow 2px
+ *   6. Info sekunder ...... tanpa border/shadow, warna muted
+ * ==========================================================================*/
+
+/* ----------------------------- TOKENS / THEME ---------------------------- */
+:root {
+  /* Warna dasar */
+  --black: #111111;
+  --white: #ffffff;
+  --bg: #ffe9f4;
+
+  /* Aksen soft pink (brand utama) */
+  --pink: #ff4d9d;
+  --pink-soft: #ffd1e6;
+  --pink-tint: #fff1f7;
+
+  /* Aksen light green (sekunder / sukses) */
+  --green: #2fb85f;
+  --green-soft: #cdf5d9;
+
+  /* Status */
+  --amber: #f5a623;
+  --amber-soft: #ffe8bf;
+  --danger: #e5484d;
+
+  /* Teks */
+  --ink-muted: #555555;
+  --ink-soft: #6f6f6f;
+
+  /* Border */
+  --line: 3px solid var(--black);
+  --line-thin: 2px solid var(--black);
+  --line-card: 4px solid var(--black);
+
+  /* Radius moderat */
+  --radius: 16px;
+  --radius-sm: 12px;
+  --radius-pill: 999px;
+
+  /* Shadow bertingkat -> dipakai sesuai kepentingan elemen */
+  --shadow-card: 6px 6px 0 var(--black);
+  --shadow-btn: 4px 4px 0 var(--black);
+  --shadow-btn-sm: 3px 3px 0 var(--black);
+  --shadow-flat: 2px 2px 0 var(--black);
+
+  /* Tipografi: font sistem saja (tanpa font/CDN eksternal) */
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Jarak */
+  --pad: 12px;
+  --gap: 12px;
+  --touch: 44px;
+}
+
+/* --------------------------------- RESET --------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--black);
+  background-color: var(--bg);
+  /* Tekstur titik halus agar terasa seperti aplikasi, bukan halaman polos */
+  background-image: radial-gradient(rgba(17, 17, 17, 0.06) 1px, transparent 1px);
+  background-size: 18px 18px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+figure {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+/* `hidden` harus selalu menang, apa pun display yang dipakai elemennya. */
+[hidden] {
+  display: none !important;
+}
+
+/* Aksesibilitas: teks hanya untuk screen reader */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  z-index: 100;
+  background: var(--white);
+  border: var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-weight: 800;
+}
+
+.skip-link:focus {
+  left: 10px;
+  top: 10px;
+}
+
+/* Fokus keyboard yang jelas (tidak bergantung warna saja) */
+:focus-visible {
+  outline: 3px solid var(--black);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* -------------------------------- HEADER --------------------------------- */
+/* Sengaja tidak sticky & rendah, supaya terasa seperti app bar, bukan navbar. */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px var(--pad);
+  background: var(--white);
+  border-bottom: var(--line);
+}
+
+/* Wordmark: "Remi" hitam + "ku" pink. Tanpa gradient, tanpa font eksternal. */
+.brand {
+  display: inline-flex;
+  align-items: baseline;
+  font-size: clamp(1.3rem, 6vw, 1.65rem);
+  font-weight: 900;
+  letter-spacing: -0.015em;
+  line-height: 1;
+}
+
+.brand-remi {
+  color: var(--black);
+}
+
+.brand-ku,
+.brand-accent {
+  color: var(--pink);
+}
+
+/* --------------------------------- MAIN ---------------------------------- */
+/* Lebar dibatasi agar di desktop pun tetap terasa seperti app mobile. */
+.app-main {
+  width: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+  padding: var(--pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  flex: 1;
+}
+
+/* -------------------------------- TARGET --------------------------------- */
+/* Hanya informasi status -> kecil, muted, tidak menyita perhatian dari skor. */
+.target-bar {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--white);
+  border: var(--line-thin);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-flat);
+  line-height: 1.3;
+}
+
+.target-label {
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.target-value {
+  font-size: 0.78rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: var(--black);
+}
+
+/* ------------------------------ ALERT BANNER ----------------------------- */
+/* Peristiwa penting (mis. RESET karena disalip) wajib jelas & tidak hanya warna:
+   ada border kiri tebal + ikon peringatan pada teksnya. */
+.alert-banner {
+  padding: 10px 12px;
+  background: var(--amber-soft);
+  border: var(--line);
+  border-left-width: 9px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-btn-sm);
+  font-weight: 700;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.alert-banner .alert-title {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+/* ------------------------------ PLAYERS GRID ----------------------------- */
+/* 2x2 di mobile (standar app skor), 4 kolom saat layar benar-benar lebar. */
+.players {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap);
+}
+
+/* ------------------------------ PLAYER CARD ------------------------------ */
+/* Elemen terkuat: border 4px + shadow 6px. Semua isi lain lebih ringan. */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  background: var(--white);
+  border: var(--line-card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+
+.card.is-winner {
+  background: var(--green-soft);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Nama pemain prominent, tapi panjang nama tidak boleh merusak kartu. */
+.card-name {
+  min-width: 0;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-rank,
+.badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  background: var(--white);
+  border: var(--line-thin);
+  border-radius: var(--radius-pill);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge {
+  padding: 2px 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.badge-winner {
+  background: var(--black);
+  color: var(--white);
+}
+
+/* --------------------------------- SKOR ---------------------------------- */
+/* Elemen terbesar di kartu, tanpa shadow/border agar tidak terasa berat. */
+.card-score {
+  font-size: clamp(1.7rem, 9.5vw, 2.5rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.card-score.is-long {
+  font-size: clamp(1.25rem, 7vw, 1.9rem);
+}
+
+/* Skor negatif: warna + garis bawah bergelombang (penanda non-warna). */
+.card-score.is-negative {
+  color: var(--danger);
+  text-decoration: underline wavy var(--danger) 2px;
+  text-underline-offset: 4px;
+}
+
+.card-progress-label {
+  font-size: 0.7rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+
+.progress-track {
+  height: 8px;
+  background: var(--white);
+  border: var(--line-thin);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--pink);
+  transition: width 0.25s ease;
+}
+
+/* ------------------------------ QUICK SCORE ------------------------------ */
+/* Empat preset selalu terbagi rata: 2x2 di ponsel -> 1x4 saat kartu lebar
+   (lihat breakpoint 600px). `auto-fit` sengaja tidak dipakai: pada kartu
+   selebar 390-430px ia hanya memuat 3 kolom, sehingga tombol terakhir
+   terlempar sendirian ke baris kedua (pola 3+1 yang pincang). */
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.btn-quick {
+  min-height: var(--touch);
+  padding: 4px 2px;
+  background: var(--white);
+  border: var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-btn-sm);
+  font-size: 0.8rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: transform 0.06s ease, box-shadow 0.06s ease;
+}
+
+.btn-quick:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--shadow-btn);
+}
+
+.btn-quick:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--black);
+}
+
+/* Pengurang: netral/sekunder. Penambah: primer dengan aksen pink. */
+.btn-quick.minus {
+  background: var(--white);
+}
+
+.btn-quick.plus {
+  background: var(--pink-soft);
+}
+
+.btn-quick.plus.is-primary {
+  background: var(--pink);
+  color: var(--white);
+  box-shadow: var(--shadow-btn);
+}
+
+/* -------------------------------- INPUT ---------------------------------- */
+/* Input angka dan tombol Tambah selalu DITUMPUK: masing-masing selebar kartu
+   penuh, sehingga area ketik maupun target sentuh tetap besar di semua lebar
+   layar (bukan hanya di layar sempit). */
+.input-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.score-input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--touch);
+  padding: 6px 10px;
+  background: var(--white);
+  border: var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-flat);
+  font-size: 1rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-input::placeholder {
+  color: #9a9a9a;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.btn-add {
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+}
+
+/* -------------------------------- BUTTONS -------------------------------- */
+/* Hierarki: primer (shadow 4px) > sekunder (3px) > plain/small (2px). */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--touch);
+  padding: 10px 14px;
+  background: var(--white);
+  border: var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-btn-sm);
+  font-weight: 800;
+  font-size: 0.9rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.06s ease, box-shadow 0.06s ease;
+}
+
+.btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--shadow-btn);
+}
+
+.btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--black);
+}
+
+.btn:disabled,
+.btn-quick:disabled,
+.score-input:disabled,
+.field-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn:disabled,
+.btn-quick:disabled {
+  transform: none;
+}
+
+.btn:disabled {
+  box-shadow: var(--shadow-flat);
+}
+
+.btn-primary {
+  background: var(--pink);
+  color: var(--white);
+  box-shadow: var(--shadow-btn);
+}
+
+.btn-alt {
+  background: var(--green-soft);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: var(--white);
+}
+
+.btn-plain {
+  background: var(--white);
+  box-shadow: var(--shadow-flat);
+}
+
+.btn-small {
+  min-height: 40px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
+  box-shadow: var(--shadow-flat);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* Tombol pengaturan di header: compact, ikon saja di mobile. */
+.btn-icon {
+  min-width: var(--touch);
+  padding: 0 12px;
+  box-shadow: var(--shadow-flat);
+}
+
+.icon-gear {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.icon-text {
+  display: none;
+}
+
+/* -------------------------------- PANEL ---------------------------------- */
+.panel {
+  padding: 10px 12px;
+  background: var(--white);
+  border: var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-btn-sm);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.panel-title {
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.empty-note {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+/* -------------------------------- HISTORY -------------------------------- */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-item {
+  padding: 7px 9px;
+  background: var(--pink-tint);
+  border: var(--line-thin);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.history-item .h-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.history-item .h-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item .h-delta {
+  flex: 0 0 auto;
+  padding: 0 7px;
+  border: var(--line-thin);
+  border-radius: var(--radius-pill);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-item .h-delta.plus {
+  background: var(--pink-soft);
+}
+
+.history-item .h-delta.minus {
+  background: var(--white);
+}
+
+.history-item .h-transition {
+  flex: 1 1 auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.history-item .h-time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+/* Baris RESET: dibedakan lewat background + border + awalan teks, bukan warna saja. */
+.history-reset {
+  margin-top: 6px;
+  padding: 5px 8px;
+  background: var(--amber-soft);
+  border: var(--line-thin);
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  font-size: 0.74rem;
+}
+
+.history-reset::before {
+  content: "\26A0  RESET \00B7 ";
+  font-weight: 900;
+}
+
+.history-list-full {
+  max-height: 48vh;
+  max-height: 48dvh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* ---------------------------- AKSI TINGKAT HALAMAN ----------------------- */
+.app-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.app-actions .btn {
+  flex: 1 1 0;
+}
+
+/* "Lihat Hasil" = sekunder (lebih ringan), "Permainan Baru" = destruktif. */
+.app-actions .btn-alt {
+  box-shadow: var(--shadow-flat);
+}
+
+/* -------------------------------- FOOTER --------------------------------- */
+.app-footer {
+  padding: 14px var(--pad) calc(14px + env(safe-area-inset-bottom, 0px));
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+}
+
+/* --------------------------------- TOAST --------------------------------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(92vw, 440px);
+  padding: 10px 14px;
+  background: var(--black);
+  color: var(--white);
+  border: var(--line-thin);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-btn-sm);
+  font-weight: 700;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.toast.is-error {
+  background: var(--danger);
+}
+
+.toast.is-warn {
+  background: var(--amber);
+  color: var(--black);
+}
+
+/* --------------------------------- MODALS -------------------------------- */
+/* Di mobile modal tampil sebagai BOTTOM SHEET (lebih nyaman dijangkau jempol). */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+/* Kunci scroll halaman saat modal terbuka. */
+body.modal-open {
+  overflow: hidden;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(17, 17, 17, 0.55);
+}
+
+.modal-card {
+  position: relative;
+  width: 100%;
+  max-height: 92vh;
+  max-height: 92dvh;
+  overflow-y: auto;
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+  background: var(--white);
+  border: var(--line);
+  border-bottom: 0;
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -5px 0 var(--black);
+  -webkit-overflow-scrolling: touch;
+}
+
+/* "Grab handle" kecil sebagai penanda bahwa ini sheet, bukan halaman. */
+.modal-card::before {
+  content: "";
+  display: block;
+  width: 44px;
+  height: 5px;
+  margin: 0 auto 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(17, 17, 17, 0.18);
+}
+
+.modal-title {
+  font-size: 1rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+
+.modal-note {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  margin-bottom: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.modal-actions .btn {
+  flex: 1 1 130px;
+}
+
+.modal-actions-col {
+  flex-direction: column;
+}
+
+.modal-actions-col .btn {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.modal-foot {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+/* -------------------------------- SETTINGS ------------------------------- */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-label {
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
+.field-input {
+  min-height: var(--touch);
+  padding: 8px 12px;
+  background: var(--white);
+  border: var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-flat);
+  font-weight: 700;
+}
+
+/* --------------------------------- WINNER -------------------------------- */
+.modal-winner {
+  text-align: center;
+}
+
+.winner-brand {
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: -0.015em;
+  line-height: 1;
+}
+
+.winner-kicker {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pink);
+}
+
+.winner-trophy {
+  font-size: 2.2rem;
+  line-height: 1.1;
+  margin-top: 4px;
+}
+
+/* Kotak pemenang = fokus utama layar hasil. */
+.winner-box {
+  margin-top: 10px;
+  padding: 12px 10px;
+  background: var(--green-soft);
+  border: var(--line-card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-btn-sm);
+}
+
+.winner-flag {
+  display: inline-block;
+  padding: 2px 10px;
+  background: var(--black);
+  color: var(--white);
+  border-radius: var(--radius-pill);
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.winner-name {
+  margin-top: 8px;
+  font-size: clamp(1.4rem, 7vw, 1.9rem);
+  font-weight: 900;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.winner-score {
+  margin-top: 6px;
+  display: inline-block;
+  padding: 5px 14px;
+  background: var(--white);
+  border: var(--line);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-flat);
+  font-weight: 900;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.winner-subtitle {
+  margin: 16px 0 8px;
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--ink-muted);
+}
+
+.ranking {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ranking-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: var(--pink-tint);
+  border: var(--line-thin);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.ranking-item:first-child {
+  background: var(--green-soft);
+  border: var(--line);
+  box-shadow: var(--shadow-flat);
+}
+
+.ranking-pos {
+  flex: 0 0 30px;
+  font-size: 0.85rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nama panjang tidak boleh merusak kolom skor yang harus rata kanan. */
+.ranking-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-score {
+  flex: 0 0 auto;
+  min-width: 48px;
+  text-align: right;
+  font-weight: 900;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Skor negatif di daftar ranking: sama seperti kartu (warna + garis
+   bergelombang) agar penanda minus tidak hanya bergantung pada warna. */
+.ranking-score.is-negative {
+  color: var(--danger);
+  text-decoration: underline wavy var(--danger) 2px;
+  text-underline-offset: 4px;
+}
+
+/* ------------------------------ CONFIRM MODAL ---------------------------- */
+.confirm-message {
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+/* ------------------------------- ANIMATIONS ------------------------------ */
+/* Sengaja singkat & sedikit agar skor terasa instan, bukan animasi berlebihan. */
+@keyframes scorePulse {
+  from {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.05);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes cardFlash {
+  0% {
+    background: var(--pink-soft);
+  }
+  100% {
+    background: var(--white);
+  }
+}
+
+@keyframes resetFlash {
+  0%,
+  100% {
+    background: var(--white);
+  }
+  25%,
+  75% {
+    background: var(--amber-soft);
+  }
+  50% {
+    background: var(--amber);
+  }
+}
+
+.card.just-updated {
+  animation: cardFlash 0.5s ease;
+}
+
+.card.just-updated .card-score {
+  animation: scorePulse 0.35s ease;
+}
+
+.card.just-reset {
+  animation: resetFlash 0.9s ease 2;
+}
+
+/* ------------------------------- RESPONSIVE ------------------------------ */
+/* 375px ke atas: beri sedikit ruang lebih; grid tombol cepat tetap 2x2. */
+@media (min-width: 400px) {
+  :root {
+    --pad: 14px;
+  }
+}
+
+/* Tablet & desktop: modal kembali menjadi dialog di tengah. */
+@media (min-width: 600px) {
+  :root {
+    --pad: 16px;
+    --gap: 14px;
+  }
+
+  .modal {
+    align-items: center;
+    padding: 16px;
+  }
+
+  .modal-card {
+    max-width: 440px;
+    border-bottom: var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+  }
+
+  .modal-card::before {
+    display: none;
+  }
+
+  /* Label teks tombol pengaturan boleh tampil di layar lebar. */
+  .icon-text {
+    display: inline;
+  }
+
+  .app-header {
+    padding: 10px var(--pad);
+  }
+
+  .card {
+    padding: 12px;
+  }
+
+  .card-name {
+    font-size: 0.86rem;
+  }
+
+  /* Kartu sudah cukup lebar untuk satu baris empat preset (>=44px/kolom). */
+  .quick-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .history-item {
+    font-size: 0.8rem;
+  }
+}
+
+/* Layar sangat kecil (320px): rapatkan spacing, jangan sampai ada scroll horizontal. */
+@media (max-width: 340px) {
+  :root {
+    --pad: 10px;
+    --gap: 10px;
+  }
+
+  .brand {
+    font-size: 1.25rem;
+  }
+
+  .card {
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .card-score {
+    font-size: clamp(1.45rem, 9vw, 1.9rem);
+  }
+
+  .card-score.is-long {
+    font-size: clamp(1.1rem, 7vw, 1.4rem);
+  }
+
+  .btn-quick {
+    font-size: 0.74rem;
+  }
+
+  .app-actions {
+    flex-direction: column;
+  }
+}
+
+/* Hormati preferensi pengguna yang mengurangi animasi */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Mode cetak: hindari bayangan berat */
+@media print {
+  .app-header,
+  .app-actions,
+  .quick-grid,
+  .input-row,
+  .toast,
+  .modal {
+    display: none !important;
+  }
+
+  .card {
+    box-shadow: none;
+  }
+}
