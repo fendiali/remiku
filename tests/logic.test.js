@@ -66,7 +66,9 @@ return {
   checkWinner: checkWinner,
   computeRanking: computeRanking,
   applyScoreChange: applyScoreChange,
-  parseScoreInput: parseScoreInput
+  parseScoreInput: parseScoreInput,
+  normalizeNumberText: normalizeNumberText,
+  base64ToBytes: base64ToBytes
 };
 `;
 
@@ -217,6 +219,55 @@ test('menolak nilai di luar batas wajar', function () {
   assert.strictEqual(L.parseScoreInput(String(L.MAX_ABS_INPUT + 1)), null);
   assert.strictEqual(L.parseScoreInput(String(-(L.MAX_ABS_INPUT + 1))), null);
   assert.strictEqual(L.parseScoreInput(String(L.MAX_ABS_INPUT)), L.MAX_ABS_INPUT);
+});
+
+/* Bug yang diperbaiki: keyboard ponsel/autokoreksi/hasil salin-tempel mengirim
+   minus Unicode, sehingga "-25" terlihat benar di layar tapi DITOLAK. */
+
+test('menerima semua varian tanda minus yang terlihat seperti "-25"', function () {
+  [
+    '-25',        // ASCII (keyboard biasa)
+    '\u221225',   // U+2212 minus matematis (keyboard iOS/Android)
+    '\u201325',   // U+2013 en dash (autokoreksi)
+    '\u201425',   // U+2014 em dash
+    '\u201025',   // U+2010 hyphen
+    '\u201125',   // U+2011 non-breaking hyphen
+    '\u201225',   // U+2012 figure dash
+    '\u201525',   // U+2015 horizontal bar
+    '\u204325',   // U+2043 hyphen bullet
+    '\ufe6325',   // U+FE63 small hyphen-minus
+    '\uff0d25',   // U+FF0D fullwidth hyphen-minus
+    '- 25',       // spasi setelah tanda
+    '\u00a0-\u00a025',  // NBSP di kiri & kanan tanda
+    '\u200b-25',  // zero-width space
+    '\u202f- 25'  // narrow NBSP + spasi
+  ].forEach(function (raw) {
+    assert.strictEqual(L.parseScoreInput(raw), -25, 'harus -25: ' + JSON.stringify(raw));
+  });
+});
+
+test('menerima angka fullwidth dan varian tanda plus', function () {
+  assert.strictEqual(L.parseScoreInput('\uff12\uff15'), 25);      // "２５"
+  assert.strictEqual(L.parseScoreInput('\uff0b25'), 25);          // "＋25"
+  assert.strictEqual(L.parseScoreInput('\ufe6225'), 25);          // "﹢25"
+  assert.strictEqual(L.parseScoreInput('\u279525'), 25);          // "➕25"
+  assert.strictEqual(L.parseScoreInput('\uff0d\uff12\uff15'), -25); // "－２５"
+});
+
+test('normalisasi TIDAK membuat input tidak valid menjadi diterima', function () {
+  ['\u2212', '-', '+', '\u22122.5', '2,5', '--25', '+-25', '25-', 'a25', '2 5a',
+   'NaN', 'Infinity', '\u2212\u221225'].forEach(function (raw) {
+    assert.strictEqual(L.parseScoreInput(raw), null, 'harus ditolak: ' + JSON.stringify(raw));
+  });
+});
+
+test('normalizeNumberText hanya merapikan bentuk, bukan mengubah tanda', function () {
+  assert.strictEqual(L.normalizeNumberText('\u2212 25'), '-25');
+  assert.strictEqual(L.normalizeNumberText('  +50 '), '+50');
+  assert.strictEqual(L.normalizeNumberText('\uff12\uff15'), '25');
+  assert.strictEqual(L.normalizeNumberText('\u00a0-25\u200b'), '-25');
+  assert.strictEqual(L.normalizeNumberText(50), '', 'non-string dianggap kosong');
+  assert.strictEqual(L.normalizeNumberText(null), '', 'null dianggap kosong');
 });
 
 /* -------------------------------------------------------------------------- */
@@ -532,6 +583,39 @@ test('riwayat dibatasi HISTORY_LIMIT entri agar localStorage tetap ringan', func
 
   assert.strictEqual(s.history.length, L.HISTORY_LIMIT);
   assert.strictEqual(s.scores[0], total, 'skor tetap terakumulasi penuh');
+});
+
+/* -------------------------------------------------------------------------- */
+group('TEST 13 \u2014 Dekoder base64 (jalur Simpan Hasil)');
+
+test('base64ToBytes mendekode data dengan/tanpa padding', function () {
+  assert.deepStrictEqual(Array.from(L.base64ToBytes('UmVtaWt1')), [0x52, 0x65, 0x6d, 0x69, 0x6b, 0x75]);
+  assert.deepStrictEqual(Array.from(L.base64ToBytes('TWE=')), [0x4d, 0x61]);
+  assert.deepStrictEqual(Array.from(L.base64ToBytes('TQ==')), [0x4d]);
+  assert.deepStrictEqual(Array.from(L.base64ToBytes('AQID')), [1, 2, 3]);
+  assert.deepStrictEqual(Array.from(L.base64ToBytes('')), [], 'teks kosong -> byte kosong');
+  assert.deepStrictEqual(Array.from(L.base64ToBytes('UmVt\naWt1')), [0x52, 0x65, 0x6d, 0x69, 0x6b, 0x75],
+    'baris baru diabaikan');
+});
+
+test('hasil base64ToBytes sama dengan Buffer bawaan Node (termasuk header PNG)', function () {
+  [
+    'UmVtaWt1',
+    'TQ==',
+    'AQIDBAUGBwgJCg==',
+    'iVBORw0KGgo=',                       // 8 byte pertama berkas PNG
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+  ].forEach(function (b64) {
+    const expected = Array.from(Buffer.from(b64, 'base64'));
+    assert.deepStrictEqual(Array.from(L.base64ToBytes(b64)), expected, 'sampel ' + b64.slice(0, 16) + '...');
+  });
+});
+
+test('base64ToBytes menolak teks yang bukan base64', function () {
+  ['!!!!', 'UmV=A', '====', '=', null, undefined, 42, {}, []].forEach(function (bad) {
+    assert.strictEqual(L.base64ToBytes(bad), null, 'harus null: ' + JSON.stringify(bad));
+  });
+  assert.strictEqual(L.base64ToBytes('A'), null, '1 karakter mustahil untuk base64');
 });
 
 /* ========================================================================== */

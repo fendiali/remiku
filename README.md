@@ -45,8 +45,9 @@ Target 1000 poin · Milestone 500–999 · Reset bila pemilik milestone disalip
 | Nama pemain | Bisa diubah kapan saja dan tersimpan otomatis (maks. 24 karakter). |
 | Layar hasil | Nama pemenang, skor, badge **PEMENANG**, dan ranking lengkap. |
 | Modal bottom-sheet | Panel pengaturan/riwayat/hasil naik dari bawah di ponsel (≥ 600 px jadi dialog tengah). |
-| Simpan hasil | Ekspor hasil menjadi gambar **PNG** lewat Canvas API (900 px, tajam di layar retina). |
-| Bagikan | Memakai *Web Share API* bila tersedia; otomatis jatuh ke unduhan biasa bila tidak. |
+| Simpan hasil | Ekspor hasil menjadi gambar **PNG** lewat Canvas API (900 px, tajam di layar retina), dibuat **sinkron** di dalam gestur ketukan agar unduhan tidak diblokir peramban. |
+| Bagikan | Di perangkat sentuh (iOS/Android) memakai *Web Share API*; di desktop langsung mengunduh berkas. Selalu ada *fallback* unduhan. |
+| Input skor negatif | Tombol **±** di dalam kolom skor (keypad numerik ponsel tidak punya tombol minus) + normalisasi otomatis varian minus Unicode. |
 | Offline | Setelah kunjungan pertama, aplikasi bisa dibuka tanpa internet (service worker). |
 | Installable | Bisa dipasang ke home screen Android/iOS sebagai PWA. |
 | Tanpa dependency | Hanya HTML, CSS, dan JavaScript murni. Tidak ada CDN, tidak ada framework. |
@@ -95,13 +96,18 @@ Karena A disalip, A kehilangan milestone itu dan kembali ke 0.
 2. (Opsional) Ketuk **⚙ Pengaturan** untuk mengubah nama keempat pemain.
    Nama tersimpan otomatis dan **tidak** hilang saat memulai permainan baru.
 3. Tambahkan skor memakai tombol skor cepat (`-35`, `-40`, `+250`, `+300`) atau ketik
-   nilai manual lalu tekan **Tambah**/Enter.
+   nilai manual lalu tekan **Tambah**/Enter. Untuk skor **negatif** cukup ketik
+   angkanya lalu ketuk tombol **±** di dalam kolom (keypad numerik ponsel tidak
+   menyediakan tombol minus). Minus Unicode dari ponsel/tempelan (`−25`, `–25`)
+   otomatis dirapikan menjadi `-25`.
 4. Ketika ada pemain disalip, akan muncul **banner RESET** dan kartu pemain yang
    direset berkedip kuning.
 5. Ketuk **Lihat Semua** pada panel *Riwayat Terbaru* untuk membuka riwayat lengkap
    (di sana juga tersedia tombol **Hapus Riwayat**).
 6. Setelah ada pemain mencapai 1000 poin, layar **Hasil Permainan** terbuka otomatis.
-   Ketuk **Simpan Hasil** untuk mengunduh/membagikan gambar PNG hasil permainan.
+   Ketuk **Simpan Hasil** untuk menyimpan gambar PNG: di desktop berkas langsung
+   terunduh (mis. folder *Downloads*), di ponsel *share sheet* terbuka dan Anda bisa
+   memilih **Simpan Gambar / Save Image**.
 7. Ketuk **Permainan Baru** untuk mengosongkan skor, riwayat, dan urutan milestone.
    Nama pemain tetap dipertahankan.
 
@@ -240,7 +246,7 @@ Tidak ada konfigurasi khusus yang diperlukan.
 - **Wajib HTTPS** agar service worker aktif dan PWA dapat dipasang.
   (`localhost` dikecualikan dan tetap dianggap sebagai konteks aman.)
 - **Setelah memperbarui berkas**, naikkan nilai `CACHE_NAME` di `sw.js`
-  (mis. `remiku-v2` → `remiku-v3`) agar pengguna lama mendapat versi terbaru.
+  (mis. `remiku-v3` → `remiku-v4`) agar pengguna lama mendapat versi terbaru.
   Data pemain di `localStorage` **tidak** ikut terhapus.
 - Tidak perlu mengatur header khusus, tetapi bila bisa, tambahkan
   `Cache-Control: no-cache` untuk `sw.js` dan `index.html` agar pembaruan
@@ -263,7 +269,7 @@ Tidak ada konfigurasi khusus yang diperlukan.
   pembaruan aplikasi tidak akan menghapus data pemain.
 
 **Memperbarui versi aplikasi:** ubah `CACHE_NAME` di `sw.js`
-(`remiku-v2` → `remiku-v3`) lalu deploy. Service worker lama akan dihapus
+(`remiku-v3` → `remiku-v4`) lalu deploy. Service worker lama akan dihapus
 otomatis pada fase `activate`.
 
 **Memasang ke home screen:**
@@ -321,7 +327,7 @@ TEST 1 — State awal
   ✓ terdiri dari 4 pemain dengan skor 0
   ...
 ----------------------------------------------------------------
-SEMUA LULUS — 39 pengujian berhasil.
+SEMUA LULUS — 46 pengujian berhasil.
 ```
 
 ```
@@ -329,7 +335,7 @@ DOM 1 — Bootstrap: render 4 kartu pemain
   ✓ empat kartu pemain dirender dari index.html + app.js
   ...
 ----------------------------------------------------------------
-SEMUA LULUS — 50 pengujian DOM berhasil.
+SEMUA LULUS — 65 pengujian DOM berhasil.
 ```
 
 *Exit code* `0` bila semua lulus, `1` bila ada yang gagal (cocok untuk CI).
@@ -349,7 +355,7 @@ yang benar-benar dipakai aplikasi** — bukan salinan yang bisa menyimpang.
 | --- | --- |
 | TEST 1 | State awal (4 pemain, skor 0, nama default, konstanta). |
 | TEST 2 | Kenaikan/penurunan skor dan pencatatan riwayat. |
-| TEST 3 | Validasi input: `50`, `+50`, `-50`, spasi, huruf, desimal, `0`, batas maksimum. |
+| TEST 3 | Validasi input: `50`, `+50`, `-50`, spasi, huruf, desimal, `0`, batas maksimum, serta normalisasi varian Unicode (`−50` U+2212, `–50` U+2013, `－５０` fullwidth, spasi/NBSP/zero-width). |
 | TEST 4 | Penolakan `bad-amount` dan `bad-player` tanpa mengubah state. |
 | TEST 5 | Pencatatan milestone 500–999 dan urutan pencapaian. |
 | TEST 6 | Seri **bukan** penyalipan. |
@@ -359,6 +365,7 @@ yang benar-benar dipakai aplikasi** — bukan salinan yang bisa menyimpang.
 | TEST 10 | Kemenangan pada 1000 poin dan penguncian input. |
 | TEST 11 | Ranking dan tie-breaker deterministik. |
 | TEST 12 | Riwayat berurutan dan batas `HISTORY_LIMIT`. |
+| TEST 13 | Dekoder base64 internal (`base64ToBytes`): padding, newline, penolakan input tidak valid, dan hasil samakan dengan `Buffer` bawaan Node (termasuk header PNG). |
 | QUICK SCORE §34 | Preset `-35 → -40 → +250 → +300` pada skor 0 menghasilkan `-35 → -75 → 175 → 475`, lengkap dengan riwayat & penyimpanan. |
 
 ### Uji DOM — `tests/dom.test.js`
@@ -386,7 +393,7 @@ Uji ini memverifikasi **aplikasi yang benar-benar dirender**, bukan salinan:
 | --- | --- |
 | DOM 1 | Bootstrap: 4 kartu pemain, tombol skor cepat `-35/-40/+250/+300`, input, progress bar, tahun footer. |
 | DOM 2 | Klik tombol skor cepat: skor, progress bar, kelas `is-negative`, riwayat, penyimpanan, urutan preset (QUICK SCORE §34), serta milestone/reset lewat tombol cepat. |
-| DOM 3 | Input manual: tombol Tambah, tombol Enter, penolakan input tidak valid. |
+| DOM 3 | Input manual: tombol Tambah, tombol Enter, penolakan input tidak valid, tombol **±** (termasuk keadaan kosong & penguncian setelah menang), serta penerimaan minus Unicode/en dash/angka fullwidth. |
 | DOM 4 | Banner RESET beserta penjelasannya, kartu direset, seri tidak me-reset, auto-hilang 12 detik. |
 | DOM 5 | Modal hasil otomatis, ranking `#n`, badge **PEMENANG**, skor negatif di ranking ditandai `is-negative`, penguncian **semua** input & tombol, penolakan skor setelah menang. |
 | DOM 6 | Persistensi: skor, riwayat, layar hasil, dan kunci input bertahan setelah refresh; data rusak tidak mematikan aplikasi. |
@@ -395,6 +402,7 @@ Uji ini memverifikasi **aplikasi yang benar-benar dirender**, bukan salinan:
 | DOM 9 | Modal: riwayat lengkap, Escape hanya menutup modal teratas, klik backdrop, kelas `modal-open`. |
 | DOM 10 | Hapus riwayat tidak menghapus skor. |
 | DOM 11 | Jalur bootstrap cadangan (`readyState` `loading` vs `complete`). |
+| DOM 12 | Simpan Hasil: PNG dibuat **sinkron** lewat `toDataURL` (bukan `toBlob`) dan unduhan `.png` terpicu di dalam satu klik; `navigator.share` di perangkat sentuh dipanggil **masih di dalam gestur klik**, gagal share jatuh ke unduhan (tanpa klaim palsu), batal share mengunduh tidak memaksa, desktop dengan *pointer* halus selalu mengunduh; tanpa pemenang tidak ada unduhan. |
 
 ### Menjalankan di CI (contoh GitHub Actions)
 
@@ -459,10 +467,12 @@ serta iOS 15+ dan Android 10+. Fitur berikut memiliki *fallback* otomatis:
 
 | Fitur | Fallback |
 | --- | --- |
-| `canvas.toBlob()` | `canvas.toDataURL()` → unduhan biasa |
+| `canvas.toBlob()` | tidak dipakai lagi: PNG dibuat **sinkron** lewat `canvas.toDataURL()` agar izin gestur pengguna tetap aktif |
 | `canvas.roundRect()` | digambar manual dengan `arcTo()` |
 | `navigator.share()` | otomatis beralih ke unduhan file |
 | `navigator.canShare()` | langsung memakai unduhan |
+| `window.matchMedia()` / `File` / `Blob` | langsung memakai unduhan (data URL) |
+| `atob()` saat membentuk berkas PNG | dekoder base64 internal (`base64ToBytes`), tanpa dependensi |
 | Service Worker | dilewati bila tidak didukung atau pada protokol `file:` |
 | `localStorage` | aplikasi tetap jalan, hanya tanpa penyimpanan |
 
@@ -478,7 +488,9 @@ sehingga dapat dimuat langsung sebagai `<script defer>`.
 | Perubahan kode tidak terlihat | Service worker masih menyajikan cache lama. Naikkan `CACHE_NAME` di `sw.js`, lalu *hard reload*. |
 | PWA tidak bisa dipasang | Halaman harus diakses lewat `https://` atau `http://localhost`. |
 | Skor tidak tersimpan | `localStorage` diblokir (mode privat / pengaturan situs). |
-| Tombol **Simpan Hasil** tidak mengunduh | Di iOS, gambar dibagikan lewat *share sheet*; pilih *Save Image*. |
+| Tombol **Simpan Hasil** tidak bereaksi | Gambar dibuat **sinkron** di dalam ketukan; bila masih gagal, pastikan ekstensi privasi tidak mematikan Canvas API. Pesan di layar tidak lagi menyesatkan: kegagalan selalu memunculkan toast error. |
+| Tombol **Simpan Hasil** tidak mengunduh di ponsel | Di iOS/Android gambar dibagikan lewat *share sheet*; pilih **Save Image** / **Simpan ke Galeri**. |
+| Skor negatif tidak bisa diketik di ponsel | Keypad numerik tidak punya tombol minus: ketuk tombol **±** di dalam kolom skor, atau tempel `-25` (varian minus Unicode otomatis dinormalkan). |
 | `node: command not found` | Pasang Node.js 18+ hanya bila ingin menjalankan uji otomatis; aplikasi sendiri tidak memerlukannya. |
 
 ---

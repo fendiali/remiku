@@ -12,13 +12,13 @@
  *  - Tidak ada request ke CDN. Hanya same-origin yang ditangani.
  *
  * Cara merilis versi baru:
- *  - Naikkan CACHE_NAME (mis. "remiku-v2" -> "remiku-v3").
+ *  - Naikkan CACHE_NAME (mis. "remiku-v3" -> "remiku-v4").
  *  - SW lama akan dihapus pada fase "activate", localStorage TIDAK tersentuh.
  * ==========================================================================*/
 
 'use strict';
 
-const CACHE_NAME = 'remiku-v3';
+const CACHE_NAME = 'remiku-v4';
 
 /* Aset inti (app shell). Semua relatif terhadap scope service worker. */
 const APP_SHELL = [

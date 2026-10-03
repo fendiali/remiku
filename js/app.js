@@ -253,15 +253,84 @@ function applyScoreChange(state, playerIndex, amount) {
   return result;
 }
 
+/** Alfabet base64 standar (dipakai dekoder manual di bawah). */
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+/**
+ * Menormalkan teks angka dari keyboard/tempat tempel apa pun menjadi ASCII,
+ * mis. "\u221225" (minus Unicode) -> "-25".
+ *
+ * MENGAPA perlu? Keyboard ponsel, autokoreksi, dan hasil salin-tempel sering
+ * mengirim karakter yang BUKAN tanda minus ASCII:
+ *   U+2212 "−" (minus matematis), U+2013 "–" (en dash), U+2014 "—" (em dash),
+ *   U+2010/U+2011/U+2012/U+2015/U+2043/U+FE63/U+FF0D "－" (fullwidth),
+ *   plus varian plus U+FF0B "＋", U+FE62, U+2795.
+ * Ditambah angka fullwidth ("２５") serta spasi/NBSP/zero-width yang ikut
+ * tersalin. Tanpa normalisasi, semua itu ditolak padahal di layar terlihat
+ * persis seperti "-25".
+ */
+function normalizeNumberText(value) {
+  if (typeof value !== 'string') return '';
+
+  return value
+    // Karakter tak terlihat (zero-width space/joiner, word joiner).
+    .replace(/[\u200b-\u200d\u2060]/g, '')
+    // Semua spasi dibuang (regex \s mencakup NBSP U+00A0, narrow NBSP U+202F,
+    // dan BOM U+FEFF) supaya "- 25" tetap dibaca "-25".
+    .replace(/\s+/g, '')
+    // Varian tanda minus/penghubung -> "-" ASCII.
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2043\u2212\ufe63\uff0d]/g, '-')
+    // Varian tanda plus -> "+" ASCII.
+    .replace(/[\u2795\ufe62\uff0b]/g, '+')
+    // Angka fullwidth "２５" -> "25" (blok U+FF10-U+FF19 digeser ke U+0030-U+0039).
+    .replace(/[\uff10-\uff19]/g, function (ch) {
+      return String.fromCharCode(ch.charCodeAt(0) - 0xfee0);
+    });
+}
+
+/**
+ * Mendekode teks base64 menjadi Uint8Array, atau null bila tidak valid.
+ *
+ * MENGAPA ditulis manual (bukan `atob`)? Agar hasilnya identik di browser
+ * maupun di Node.js sehingga bisa diuji otomatis tanpa DOM, sekaligus tidak
+ * bergantung pada ketersediaan `atob` di peramban lama.
+ */
+function base64ToBytes(base64) {
+  if (typeof base64 !== 'string') return null;
+
+  const clean = base64.replace(/\s+/g, '');
+  const data = clean.replace(/=+$/, '');
+  if (data === '') return clean === '' ? new Uint8Array(0) : null;
+  if (!/^[A-Za-z0-9+/]+$/.test(data)) return null;
+  if (data.length % 4 === 1) return null; // panjang mustahil untuk base64
+
+  const bytes = new Uint8Array(Math.floor((data.length * 6) / 8));
+  let out = 0;
+  let buffer = 0;
+  let bits = 0;
+
+  for (let i = 0; i < data.length; i++) {
+    buffer = (buffer << 6) | BASE64_ALPHABET.indexOf(data.charAt(i));
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes[out++] = (buffer >> bits) & 0xff;
+    }
+  }
+
+  return bytes;
+}
+
 /**
  * Mengubah teks input menjadi bilangan bulat, atau null bila tidak valid.
  * Ditolak: kosong, desimal, huruf, dan 0 (tidak mengubah apa pun).
- * Diterima: 50, +50, -50, 100, -100.
+ * Diterima: 50, +50, -50, serta varian yang dinormalkan normalizeNumberText
+ * (mis. "−50" minus Unicode, "２５" angka fullwidth, "- 50" berspasi).
  */
 function parseScoreInput(value) {
   if (typeof value !== 'string') return null;
 
-  const v = value.trim();
+  const v = normalizeNumberText(value);
   if (v === '') return null;                       // input kosong
   if (!/^[+-]?\d+$/.test(v)) return null;          // hanya bilangan bulat (tanpa titik/koma/huruf)
 
@@ -618,12 +687,38 @@ function buildPlayerCard(index) {
     'aria-label': 'Input skor untuk ' + name,
     disabled: locked ? 'disabled' : null
   });
+  // Normalisasi saat mengetik/menempel: keyboard ponsel & autokoreksi kerap
+  // mengirim minus Unicode/U+2212 atau angka fullwidth. Nilainya langsung
+  // diperbaiki di kolom input agar pengguna MELIHAT "-25" yang benar.
+  input.addEventListener('input', function () {
+    const normalized = normalizeNumberText(input.value);
+    if (normalized !== input.value) {
+      input.value = normalized;
+      moveCaretToEnd(input);
+    }
+  });
   input.addEventListener('keydown', function (event) {
     if (event.key === 'Enter') {
       event.preventDefault();
       submitScoreInput(index);
     }
   });
+
+  // Tombol "±": keypad numerik di ponsel (`inputmode="numeric"`) TIDAK punya
+  // tombol minus, sehingga tanpa tombol ini skor negatif tak bisa diketik.
+  const signBtn = h('button', {
+    class: 'sign-toggle',
+    type: 'button',
+    text: '\u00b1',
+    title: 'Ubah tanda plus/minus',
+    'aria-label': 'Ubah tanda skor ' + name + ' menjadi negatif atau positif',
+    disabled: locked ? 'disabled' : null
+  });
+  signBtn.addEventListener('click', function () {
+    toggleScoreSign(index);
+  });
+
+  const inputWrap = h('div', { class: 'input-wrap' }, [input, signBtn]);
 
   const addBtn = h('button', {
     class: 'btn btn-primary btn-add',
@@ -636,7 +731,7 @@ function buildPlayerCard(index) {
     submitScoreInput(index);
   });
 
-  const inputRow = h('div', { class: 'input-row' }, [input, addBtn]);
+  const inputRow = h('div', { class: 'input-row' }, [inputWrap, addBtn]);
 
   return h('article', {
     class: classes.join(' '),
@@ -801,13 +896,46 @@ function submitScoreInput(playerIndex) {
 
   const amount = parseScoreInput(input.value);
   if (amount === null) {
-    showToast('Masukkan bilangan bulat, contoh: 50 atau -50.', 'error');
+    showToast('Masukkan bilangan bulat, contoh: 50 atau -50 (tombol \u00b1 untuk minus).', 'error');
     try { input.focus(); } catch (err) {}
     if (input.select) input.select();
     return;
   }
 
   addScore(playerIndex, amount, true);
+}
+
+/**
+ * Membalik tanda nilai pada input skor (mis. "25" -> "-25", "−25" -> "25").
+ * Dipanggil tombol "±" sehingga pengguna keypad numerik (yang tidak punya
+ * tombol minus) tetap bisa memasukkan skor negatif.
+ * Nilai yang hanya berisi tanda minus/null tetap dapat dirapikan lewat tombol ini.
+ */
+function toggleScoreSign(playerIndex) {
+  const input = document.getElementById('score-input-' + playerIndex);
+  if (!input || input.disabled) return;
+
+  const current = normalizeNumberText(input.value);
+  let next;
+
+  if (current === '') next = '-';                              // mulai dari minus
+  else if (current.charAt(0) === '-') next = current.slice(1);  // negatif -> positif
+  else if (current.charAt(0) === '+') next = '-' + current.slice(1);
+  else next = '-' + current;                                   // positif -> negatif
+
+  input.value = next;
+  moveCaretToEnd(input);
+  try { input.focus(); } catch (err) {}
+}
+
+/** Menaruh kursor di akhir teks (dilewati di lingkungan tanpa API selection). */
+function moveCaretToEnd(input) {
+  try {
+    const end = input.value.length;
+    if (typeof input.setSelectionRange === 'function') input.setSelectionRange(end, end);
+  } catch (err) {
+    /* kursor bukan hal kritis */
+  }
 }
 
 /**
@@ -1490,7 +1618,19 @@ function drawResultCard(canvas) {
 /* Ekspor PNG + Web Share API (dengan fallback download biasa).               */
 /* ------------------------------------------------------------------------- */
 
-/** Menyimpan hasil permainan sebagai gambar PNG. */
+/**
+ * Menyimpan hasil permainan sebagai gambar PNG.
+ *
+ * MENGAPA seluruh proses ditulis SINKRON? `canvas.toBlob()` asinkron, sehingga
+ * `navigator.share()` (dan unduhan di iOS/Safari) dipanggil di luar gestur klik
+ * pengguna -> izin "user activation" hilang -> share gagal senyap sementara
+ * toast tetap muncul, dan tombol terasa tidak bekerja. `toDataURL()` sinkron,
+ * jadi izin masih melekat saat share/unduhan dipicu.
+ *
+ * Urutan: di perangkat sentuh (iOS/Android) pakai *share sheet* karena di sana
+ * itu cara paling andal menyimpan gambar; di desktop langsung unduh berkas
+ * (tombolnya bernama "Simpan Hasil", jadi unduhan adalah harapan pengguna).
+ */
 function saveResultAsImage() {
   if (!state.winner) {
     showToast('Belum ada hasil permainan untuk disimpan.', 'error');
@@ -1500,64 +1640,106 @@ function saveResultAsImage() {
   const now = new Date();
   const filename = 'remiku-hasil-' + dateStamp(now) + '.png';
 
-  let canvas;
+  let dataUrl = null;
   try {
-    canvas = document.createElement('canvas');
+    const canvas = document.createElement('canvas');
     drawResultCard(canvas);
+    dataUrl = canvas.toDataURL('image/png');
   } catch (err) {
     if (window.console && window.console.warn) {
       window.console.warn('Remiku: gagal menggambar hasil.', err);
     }
+  }
+
+  if (typeof dataUrl !== 'string' || dataUrl.indexOf('data:image/png') !== 0) {
     showToast('Gagal membuat gambar hasil.', 'error');
     return;
   }
 
-  // Fallback sangat lama: bila toBlob tidak tersedia, pakai data URL.
-  if (typeof canvas.toBlob !== 'function') {
-    try {
-      downloadDataUrl(canvas.toDataURL('image/png'), filename);
-    } catch (err) {
-      showToast('Gagal menyimpan gambar.', 'error');
-    }
+  const blob = dataUrlToBlob(dataUrl);
+
+  if (isTouchPrimaryDevice() && canShareImage(blob, filename)) {
+    shareResultImage(blob, dataUrl, filename);
     return;
   }
 
-  canvas.toBlob(function (blob) {
-    if (!blob) {
-      showToast('Gagal membuat gambar.', 'error');
-      return;
-    }
-    shareOrDownload(blob, filename);
-  }, 'image/png');
+  downloadResultImage(blob, dataUrl, filename);
+}
+
+/** Mengubah data URL PNG menjadi Blob (juga dasar berkas untuk Web Share). */
+function dataUrlToBlob(dataUrl) {
+  const comma = dataUrl.indexOf(',');
+  if (comma === -1 || dataUrl.indexOf(';base64') === -1) return null;
+
+  const bytes = base64ToBytes(dataUrl.slice(comma + 1));
+  if (!bytes) return null;
+
+  try {
+    return new Blob([bytes], { type: 'image/png' });
+  } catch (err) {
+    return null;
+  }
+}
+
+/** true bila perangkat utama memakai sentuhan (ponsel/tablet). */
+function isTouchPrimaryDevice() {
+  try {
+    if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) return false;
+    return (navigator.maxTouchPoints || 0) > 0;
+  } catch (err) {
+    return false;
+  }
+}
+
+/** true bila Web Share API bisa mengirim berkas PNG ini. */
+function canShareImage(blob, filename) {
+  if (!blob) return false;
+  if (typeof navigator.canShare !== 'function' || typeof window.File !== 'function') return false;
+
+  try {
+    return navigator.canShare({ files: [new File([blob], filename, { type: 'image/png' })] });
+  } catch (err) {
+    return false;
+  }
 }
 
 /**
- * Coba bagikan lewat Web Share API (umumnya di mobile) bila mendukung file PNG.
- * Bila tidak didukung atau dibatalkan, jatuh ke unduhan biasa.
+ * Membagikan gambar lewat Web Share API.
+ * Dibatalkan pengguna -> diam saja; gagal karena sebab lain -> unduhan.
  */
-function shareOrDownload(blob, filename) {
+function shareResultImage(blob, dataUrl, filename) {
+  let promise;
   try {
-    if (navigator.canShare && typeof window.File === 'function') {
-      const file = new File([blob], filename, { type: 'image/png' });
-
-      if (navigator.canShare({ files: [file] })) {
-        navigator
-          .share({ files: [file], title: 'Hasil Permainan Remiku', text: 'Hasil permainan Remiku' })
-          .then(function () {
-            showToast('Hasil permainan dibagikan.');
-          })
-          .catch(function (err) {
-            if (err && err.name === 'AbortError') return; // user membatalkan
-            downloadBlob(blob, filename);                 // fallback
-          });
-        return;
-      }
-    }
+    const file = new File([blob], filename, { type: 'image/png' });
+    promise = navigator.share({
+      files: [file],
+      title: 'Hasil Permainan Remiku',
+      text: 'Hasil permainan Remiku'
+    });
   } catch (err) {
-    /* Web Share tidak tersedia / gagal -> lanjut ke unduhan */
+    downloadResultImage(blob, dataUrl, filename);
+    return;
   }
 
-  downloadBlob(blob, filename);
+  if (!promise || typeof promise.then !== 'function') {
+    showToast('Hasil permainan dibagikan.');
+    return;
+  }
+
+  promise
+    .then(function () {
+      showToast('Hasil permainan dibagikan.');
+    })
+    .catch(function (err) {
+      if (err && err.name === 'AbortError') return; // pengguna membatalkan
+      downloadResultImage(blob, dataUrl, filename);
+    });
+}
+
+/** Unduhan final: pakai Blob bila tersedia, selain itu data URL. */
+function downloadResultImage(blob, dataUrl, filename) {
+  if (blob) downloadBlob(blob, filename);
+  else downloadDataUrl(dataUrl, filename);
 }
 
 /** Mengunduh blob sebagai file. */
@@ -1586,16 +1768,20 @@ function downloadBlob(blob, filename) {
   }
 }
 
-/** Fallback unduhan memakai data URL (browser tanpa toBlob). */
+/** Unduhan cadangan memakai data URL (dipakai bila Blob tidak bisa dibuat). */
 function downloadDataUrl(dataUrl, filename) {
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = filename;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  if (a.parentNode) a.parentNode.removeChild(a);
-  showToast('Gambar hasil disimpan.');
+  try {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    if (a.parentNode) a.parentNode.removeChild(a);
+    showToast('Gambar hasil disimpan.');
+  } catch (err) {
+    showToast('Gagal menyimpan gambar.', 'error');
+  }
 }
 
 /* ============================================================================

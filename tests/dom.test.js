@@ -662,10 +662,12 @@ function boot(options) {
   parseHtml(fs.readFileSync(HTML_PATH, 'utf8'), doc);
   doc.readyState = opts.readyState || 'interactive';
 
+  const nav = opts.navigator || {};
+
   const api = evalApp({
     document: doc,
     window: win,
-    navigator: {},
+    navigator: nav,
     location: { protocol: 'https:' },
     clearTimeout: clock.clearTimeout
   });
@@ -677,6 +679,7 @@ function boot(options) {
   return {
     doc: doc,
     window: win,
+    nav: nav,
     api: api,
     clock: clock,
     storage: storage,
@@ -745,6 +748,98 @@ function typeIn(env, el, value) {
 function recentItems(env) { return env.byId('recentList').querySelectorAll('.history-item'); }
 function toastText(env) { return env.byId('toast').textContent; }
 
+/* PNG 1x1 transparan: dipakai untuk menguji jalur data URL -> Blob -> unduhan. */
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+
+/**
+ * Stub universal untuk CanvasRenderingContext2D.
+ * Harness mini-DOM tidak punya Canvas API, sehingga drawResultCard() perlu objek
+ * yang bisa dibaca, ditulis, sekaligus dipanggil (fillRect, arcTo, dst.).
+ * `.width` sengaja berupa angka agar helper pengukuran teks (fitFontSize,
+ * wrapText, ellipsize) tidak berputar tanpa henti.
+ */
+function makeCanvasStub() {
+  const target = function () { return makeCanvasStub(); };
+  return new Proxy(target, {
+    get: function (obj, prop) {
+      if (prop === 'width' || prop === 'height') return 40;
+      if (prop === 'canvas') return null;
+      if (prop in obj) return obj[prop];
+      return makeCanvasStub();
+    },
+    set: function (obj, prop, value) { obj[prop] = value; return true; }
+  });
+}
+
+/** Memasang createElement tiruan; mengembalikan stub + fungsi pemulihnya. */
+function installFakeCreateElement(env) {
+  const realCreateElement = env.doc.createElement;
+  const fake = { canvas: [], anchors: [], toDataUrlCalls: 0, canvases: [] };
+
+  env.doc.createElement = function (tag) {
+    if (tag === 'canvas') {
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: function () { return makeCanvasStub(); },
+        toDataURL: function () { fake.toDataUrlCalls += 1; return 'data:image/png;base64,' + PNG_BASE64; }
+      };
+      fake.canvases.push(canvas);
+      return canvas;
+    }
+    const el = realCreateElement.call(env.doc, tag);
+    if (tag === 'a') fake.anchors.push(el);
+    return el;
+  };
+
+  return {
+    fake: fake,
+    restore: function () { env.doc.createElement = realCreateElement; }
+  };
+}
+
+/** Mengganti createElement hanya selama `fn` berjalan (sinkron). */
+function withFakeCreateElement(env, fn) {
+  const installed = installFakeCreateElement(env);
+  try {
+    fn(installed.fake);
+  } finally {
+    installed.restore();
+  }
+
+  return installed.fake;
+}
+
+/**
+ * Versi asinkron: tiruan tetap terpasang sampai `fn` (async) selesai, sehingga
+ * unduhan yang dipicu SETELAH microtask (mis. fallback ketika share gagal)
+ * tetap terekam.
+ */
+async function withFakeCreateElementAsync(env, fn) {
+  const installed = installFakeCreateElement(env);
+  try {
+    await fn(installed.fake);
+  } finally {
+    installed.restore();
+  }
+
+  return installed.fake;
+}
+
+/** Menjadikan env seolah perangkat sentuh utama (pointer: coarse). */
+function setTouchDevice(env) {
+  env.window.matchMedia = function (query) {
+    return { matches: String(query).indexOf('coarse') !== -1 };
+  };
+  env.nav.maxTouchPoints = 2;
+}
+
+/** Mengosongkan antrean microtask/promise agar efek `.then/.catch` sudah jalan. */
+function flushAsync() {
+  return new Promise(function (resolve) { setImmediate(resolve); });
+}
+
 /* ============================================================================
  * BAGIAN 4 — PENGUJIAN
  * ==========================================================================*/
@@ -787,13 +882,81 @@ async function main() {
     const row = card(env, 0).querySelector('.input-row');
     assert.ok(row, 'wadah .input-row ada');
     const kids = row.childNodes.filter(function (n) { return n.nodeType === 1; });
-    assert.strictEqual(kids.length, 2, '.input-row berisi input angka dan tombol saja');
-    assert.strictEqual(kids[0], env.byId('score-input-0'), 'input angka tampil lebih dulu');
+    assert.strictEqual(kids.length, 2, '.input-row berisi kolom input dan tombol Tambah saja');
     assert.strictEqual(
       kids[1],
       row.querySelector('.btn-add'),
-      'tombol Tambah tampil tepat setelah input (urutan tumpukan atas-bawah)'
+      'tombol Tambah tampil tepat setelah kolom input (urutan tumpukan atas-bawah)'
     );
+
+    const wrap = kids[0];
+    assert.strictEqual(wrap.className, 'input-wrap', 'kolom input dibungkus .input-wrap');
+    const inner = wrap.childNodes.filter(function (n) { return n.nodeType === 1; });
+    assert.strictEqual(inner.length, 2, '.input-wrap berisi input angka + tombol tanda');
+    assert.strictEqual(inner[0], env.byId('score-input-0'), 'input angka tampil lebih dulu');
+    assert.strictEqual(inner[1], wrap.querySelector('.sign-toggle'), 'tombol tanda \u00b1 tepat setelah input');
+  });
+
+  await test('setiap kartu punya tombol tanda \u00b1 dengan label aksesibel', function () {
+    const env = boot();
+    const signs = env.byId('players').querySelectorAll('.sign-toggle');
+    assert.strictEqual(signs.length, 4, 'satu tombol \u00b1 per pemain');
+    signs.forEach(function (b) {
+      assert.strictEqual(b.textContent, '\u00b1');
+      assert.ok(b.getAttribute('aria-label'), 'punya aria-label untuk pembaca layar');
+      assert.strictEqual(b.getAttribute('type'), 'button', 'bukan tombol submit');
+    });
+  });
+
+  await test('tombol \u00b1 membalik tanda nilai input, lalu Tambah menyimpan skor negatif', function () {
+    const env = boot();
+    typeIn(env, env.byId('score-input-2'), '25');
+
+    click(env, card(env, 2).querySelector('.sign-toggle'));
+    assert.strictEqual(env.byId('score-input-2').value, '-25', '25 -> -25 dengan satu sentuhan');
+
+    click(env, card(env, 2).querySelector('.btn-add'));
+    assert.strictEqual(scoreOf(env, 2), '-25', 'skor negatif tersimpan');
+  });
+
+  await test('tombol \u00b1 mengembalikan nilai negatif menjadi positif', function () {
+    const env = boot();
+    typeIn(env, env.byId('score-input-1'), '-40');
+
+    click(env, card(env, 1).querySelector('.sign-toggle'));
+    assert.strictEqual(env.byId('score-input-1').value, '40');
+
+    click(env, card(env, 1).querySelector('.btn-add'));
+    assert.strictEqual(scoreOf(env, 1), '40');
+  });
+
+  await test('tombol \u00b1 pada kolom kosong menyiapkan tanda minus dan bisa dibatalkan', function () {
+    const env = boot();
+    const sign = card(env, 3).querySelector('.sign-toggle');
+
+    click(env, sign);
+    assert.strictEqual(env.byId('score-input-3').value, '-', 'kolom kosong mendapat tanda minus');
+    click(env, sign);
+    assert.strictEqual(env.byId('score-input-3').value, '', 'sentuhan kedua menghapus tanda');
+  });
+
+  await test('minus Unicode (U+2212) dari keyboard ponsel diterima sebagai skor negatif', function () {
+    const env = boot();
+    // Karakter ini yang dikirim keyboard iOS/Android & hasil salin-tempel.
+    typeIn(env, env.byId('score-input-0'), '\u221225');
+
+    assert.strictEqual(env.byId('score-input-0').value, '-25',
+      'kolom input menampilkan minus ASCII (ternormalisasi saat mengetik/menempel)');
+
+    click(env, card(env, 0).querySelector('.btn-add'));
+    assert.strictEqual(scoreOf(env, 0), '-25', 'skor -25 tersimpan lewat input manual');
+  });
+
+  await test('varian angka fullwidth & en dash tetap bisa dikirim lewat tombol Tambah', function () {
+    const env = boot();
+    typeIn(env, env.byId('score-input-3'), '\u2013\uff12\uff15'); // "–２５"
+    click(env, card(env, 3).querySelector('.btn-add'));
+    assert.strictEqual(scoreOf(env, 3), '-25');
   });
 
   await test('progress bar menunjukkan 0% pada skor 0', function () {
@@ -1079,6 +1242,19 @@ async function main() {
     addBtns.forEach(function (b) { assert.strictEqual(b.disabled, true, 'tombol Tambah terkunci'); });
   });
 
+  await test('tombol tanda \u00b1 ikut dinonaktifkan setelah menang', function () {
+    const env = boot();
+    env.api.addScore(0, 1000, false);
+
+    const signs = env.byId('players').querySelectorAll('.sign-toggle');
+    assert.strictEqual(signs.length, 4, 'satu tombol \u00b1 per kartu');
+    signs.forEach(function (b) { assert.strictEqual(b.disabled, true, 'tombol \u00b1 terkunci'); });
+
+    // Klik paksa (mis. lewat DevTools) tidak boleh mengubah nilai input.
+    click(env, signs[0]);
+    assert.strictEqual(env.byId('score-input-0').value, '', 'nilai input tetap kosong');
+  });
+
   await test('percobaan menambah skor setelah menang tidak mengubah apa pun', function () {
     const env = boot();
     env.api.addScore(0, 1000, false);
@@ -1345,6 +1521,200 @@ async function main() {
   await test('readyState "complete" langsung menjalankan init', function () {
     const env = boot({ readyState: 'complete' });
     assert.strictEqual(cards(env).length, 4);
+  });
+
+  /* ------------------------------------------------------------------------ */
+  group('DOM 12 \u2014 Simpan Hasil (PNG, tanpa jalur async)');
+
+  await test('tombol Simpan Hasil membuat PNG lalu mengunduh berkas .png', function () {
+    const env = boot();
+    env.api.addScore(0, 1000, false);
+    assert.strictEqual(env.byId('winnerModal').hidden, false, 'modal hasil terbuka');
+
+    // URL.createObjectURL diganti sementara agar hasilnya sama di semua Node.
+    const realCreateObjectURL = URL.createObjectURL;
+    const realRevokeObjectURL = URL.revokeObjectURL;
+    const blobs = [];
+    URL.createObjectURL = function (blob) { blobs.push(blob); return 'blob:remiku-uji'; };
+    URL.revokeObjectURL = function () {};
+
+    let fake;
+    try {
+      fake = withFakeCreateElement(env, function () {
+        click(env, env.byId('btnSaveResult'));
+      });
+    } finally {
+      URL.createObjectURL = realCreateObjectURL;
+      URL.revokeObjectURL = realRevokeObjectURL;
+    }
+
+    // INTI PERBAIKAN: gambar dibuat & unduhan dipicu SINKRON di dalam klik,
+    // bukan di dalam callback toBlob yang membuat izin gestur hilang.
+    assert.strictEqual(fake.toDataUrlCalls, 1, 'gambar dibuat lewat toDataURL (sinkron)');
+    assert.strictEqual(fake.canvases.length, 1, 'satu kanvas hasil dibuat');
+    assert.ok(fake.canvases[0].width > 0 && fake.canvases[0].height > 0,
+      'kanvas hasil sudah digambar (ukuran terisi)');
+
+    assert.strictEqual(fake.anchors.length, 1, 'tepat satu tautan unduhan dibuat');
+    assert.match(fake.anchors[0].download, /^remiku-hasil-\d{4}-\d{2}-\d{2}\.png$/,
+      'nama berkas berakhiran .png dengan tanggal');
+    assert.ok(
+      fake.anchors[0].href === 'blob:remiku-uji' ||
+        String(fake.anchors[0].href).indexOf('data:image/png;base64,') === 0,
+      'tautan unduhan menunjuk ke gambar PNG'
+    );
+    assert.strictEqual(toastText(env), 'Gambar hasil disimpan.');
+  });
+
+  await test('Simpan Hasil sebelum ada pemenang tidak mengunduh apa pun', function () {
+    const env = boot();
+    let fake;
+    fake = withFakeCreateElement(env, function () {
+      click(env, env.byId('btnSaveResult'));
+    });
+
+    assert.strictEqual(fake.toDataUrlCalls, 0, 'tidak ada gambar yang dibuat');
+    assert.strictEqual(fake.anchors.length, 0, 'tidak ada unduhan');
+    assert.strictEqual(toastText(env), 'Belum ada hasil permainan untuk disimpan.');
+  });
+
+  await test('di perangkat sentuh gambar dibagikan lewat share sheet, bukan unduhan', async function () {
+    const env = boot();
+    setTouchDevice(env);
+
+    const shared = [];
+    let insideClick = false;
+    env.nav.canShare = function (data) {
+      return !!(data && data.files && data.files.length === 1);
+    };
+    env.nav.share = function (data) {
+      // Merekam apakah share dipanggil MASIH di dalam gestur klik pengguna.
+      shared.push({ data: data, duringClick: insideClick });
+      return Promise.resolve();
+    };
+
+    env.api.addScore(0, 1000, false);
+
+    const fake = withFakeCreateElement(env, function () {
+      insideClick = true;
+      click(env, env.byId('btnSaveResult'));
+      insideClick = false;
+    });
+
+    assert.strictEqual(fake.toDataUrlCalls, 1, 'PNG tetap dibuat sinkron');
+    assert.strictEqual(shared.length, 1, 'navigator.share dipanggil tepat sekali');
+    assert.strictEqual(shared[0].duringClick, true,
+      'PENTING: share dipanggil di dalam gestur klik (izin pengguna belum hilang)');
+    assert.strictEqual(shared[0].data.files.length, 1, 'satu berkas PNG dikirim');
+    assert.strictEqual(shared[0].data.title, 'Hasil Permainan Remiku');
+    assert.strictEqual(shared[0].data.files[0].name !== undefined, true, 'berkas punya nama');
+    assert.strictEqual(fake.anchors.length, 0, 'tidak ada unduhan saat share berhasil');
+
+    await flushAsync();
+    assert.strictEqual(toastText(env), 'Hasil permainan dibagikan.');
+  });
+
+  await test('share gagal (bukan dibatalkan) -> jatuh ke unduhan, tanpa klaim palsu', async function () {
+    const env = boot();
+    setTouchDevice(env);
+    env.nav.canShare = function () { return true; };
+    env.nav.share = function () { return Promise.reject(new Error('NotAllowedError')); };
+
+    env.api.addScore(0, 1000, false);
+
+    const realCreateObjectURL = URL.createObjectURL;
+    const realRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = function () { return 'blob:remiku-uji'; };
+    URL.revokeObjectURL = function () {};
+
+    let fake;
+    try {
+      fake = await withFakeCreateElementAsync(env, async function (f) {
+        click(env, env.byId('btnSaveResult'));
+        assert.strictEqual(f.anchors.length, 0, 'belum ada unduhan selagi share berjalan');
+        assert.strictEqual(toastText(env), '', 'belum mengklaim berhasil sebelum share selesai');
+        await flushAsync();
+      });
+    } finally {
+      URL.createObjectURL = realCreateObjectURL;
+      URL.revokeObjectURL = realRevokeObjectURL;
+    }
+
+    assert.strictEqual(fake.anchors.length, 1, 'unduhan fallback dipicu setelah share gagal');
+    assert.match(fake.anchors[0].download, /^remiku-hasil-\d{4}-\d{2}-\d{2}\.png$/);
+    assert.strictEqual(toastText(env), 'Gambar hasil disimpan.');
+  });
+
+  await test('share dibatalkan pengguna -> tidak ada unduhan & tidak ada pesan', async function () {
+    const env = boot();
+    setTouchDevice(env);
+    env.nav.canShare = function () { return true; };
+    env.nav.share = function () {
+      const err = new Error('dibatalkan');
+      err.name = 'AbortError';
+      return Promise.reject(err);
+    };
+
+    env.api.addScore(0, 1000, false);
+
+    const fake = await withFakeCreateElementAsync(env, async function () {
+      click(env, env.byId('btnSaveResult'));
+      await flushAsync();
+    });
+
+    assert.strictEqual(fake.anchors.length, 0, 'batal bukan alasan memaksa unduhan');
+    assert.strictEqual(toastText(env), '', 'tanpa pesan apa pun');
+  });
+
+  await test('perangkat sentuh tanpa canShare berkas -> langsung unduh', function () {
+    const env = boot();
+    setTouchDevice(env); // tanpa navigator.canShare
+
+    const shareCalls = [];
+    env.nav.share = function () { shareCalls.push(1); return Promise.resolve(); };
+
+    env.api.addScore(0, 1000, false);
+
+    const realCreateObjectURL = URL.createObjectURL;
+    const realRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = function () { return 'blob:remiku-uji'; };
+    URL.revokeObjectURL = function () {};
+
+    let fake;
+    try {
+      fake = withFakeCreateElement(env, function () { click(env, env.byId('btnSaveResult')); });
+    } finally {
+      URL.createObjectURL = realCreateObjectURL;
+      URL.revokeObjectURL = realRevokeObjectURL;
+    }
+
+    assert.strictEqual(shareCalls.length, 0, 'share dilewati tanpa dukungan berkas');
+    assert.strictEqual(fake.anchors.length, 1, 'tetap terunduh');
+  });
+
+  await test('desktop (pointer halus) tidak pernah memakai share, walaupun tersedia', function () {
+    const env = boot();
+    const shareCalls = [];
+    env.nav.canShare = function () { return true; };
+    env.nav.share = function () { shareCalls.push(1); return Promise.resolve(); };
+
+    env.api.addScore(0, 1000, false);
+
+    const realCreateObjectURL = URL.createObjectURL;
+    const realRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = function () { return 'blob:remiku-uji'; };
+    URL.revokeObjectURL = function () {};
+
+    let fake;
+    try {
+      fake = withFakeCreateElement(env, function () { click(env, env.byId('btnSaveResult')); });
+    } finally {
+      URL.createObjectURL = realCreateObjectURL;
+      URL.revokeObjectURL = realRevokeObjectURL;
+    }
+
+    assert.strictEqual(shareCalls.length, 0, 'tanpa dukungan pointer: coarse, share dilewati');
+    assert.strictEqual(fake.anchors.length, 1, 'tombol Simpan Hasil mengunduh berkas');
   });
 
   /* ========================================================================== */
