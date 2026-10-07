@@ -4,12 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Remiku — Papan Skor Remi</title>
-  <meta name="description" content="Remiku: papan skor permainan kartu Remi untuk 4 pemain, dengan aturan milestone 500-999 dan target 1000 poin.">
+  <meta name="description" content="Remiku: papan skor permainan kartu Remi untuk 4 pemain, dengan aturan milestone 500-999, target poin yang dapat diatur, pencatatan skor per ronde, dan statistik pemain (Ngocok, Skor Shutout, Pengocok Handal).">
   <meta name="theme-color" content="#FF4D9D">
   <meta name="color-scheme" content="light">
 
   <!-- PWA -->
   <link rel="manifest" href="manifest.json">
+  <!-- Ikon = logo kartu Remi yang persis sama dengan logo di header. -->
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -20,92 +22,169 @@
 <body>
   <a class="skip-link" href="#main">Lewati ke konten utama</a>
 
-  <!-- ============================ HEADER ============================ -->
-  <!-- Header compact: hanya wordmark + satu tombol pengaturan. -->
+  <!-- ============================== APP BAR ============================== -->
+  <!-- Header identitas aplikasi: logo kartu Remi + wordmark di kiri, dan meta
+       "versi · penulis" kecil di kanan. Bukan navbar website: tanpa menu. -->
   <header class="app-header">
-    <h1 class="brand" aria-label="Remiku">
-      <span class="brand-remi">Remi</span><span class="brand-ku">ku</span>
+    <h1 class="app-title">
+      <span class="app-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+          <rect class="logo-card-back" x="8.4" y="2.8" width="11" height="15.2" rx="2.2"/>
+          <rect class="logo-card-front" x="4.6" y="5.2" width="11" height="15.2" rx="2.2"/>
+          <path class="logo-heart" d="M10.1 16.2c-1.8-1.3-3-2.4-3-4 0-1.1.9-2 2-2 .6 0 1.2.3 1.6.9.4-.6 1-.9 1.6-.9 1.1 0 2 .9 2 2 0 1.6-1.2 2.7-3 4l-.6.4z"/>
+        </svg>
+      </span>
+      <span class="app-wordmark">Remiku</span>
     </h1>
-    <button id="btnSettings" class="btn btn-icon" type="button" aria-haspopup="dialog" aria-label="Pengaturan pemain">
-      <span class="icon-gear" aria-hidden="true">&#9881;</span>
-      <span class="icon-text">Pengaturan</span>
-    </button>
+    <!-- Meta kanan: versi (id tetap agar renderVersion() dari APP_VERSION
+         mengisinya) + penulis. Teks awal versi disamakan agar tidak berkedip. -->
+    <span class="app-meta">
+      <span class="app-version" id="appVersion">v1.4</span>
+      <span class="app-meta-sep" aria-hidden="true">&middot;</span>
+      <span class="app-author">zkvoid</span>
+    </span>
   </header>
 
-  <!-- ============================= MAIN ============================= -->
+  <!-- ================================ MAIN =============================== -->
   <main id="main" class="app-main">
 
-    <!-- Target hanya informasi, bukan fokus utama layar. -->
-    <p class="target-bar" id="targetBar">
-      <span class="target-label">Target</span>
-      <span class="target-value">1000 poin</span>
-    </p>
+    <!-- -------------------------------- MAIN ------------------------------- -->
+    <section id="screenMain" class="screen" aria-label="Beranda">
 
-    <!-- Banner khusus untuk peristiwa penting (mis. RESET karena disalip) -->
-    <section id="alertBanner" class="alert-banner" role="status" aria-live="assertive" hidden></section>
+      <!-- Banner khusus untuk peristiwa penting (mis. RESET karena overtaken) -->
+      <section id="alertBanner" class="alert-banner" role="status" aria-live="assertive" hidden></section>
 
-    <!-- Kartu pemain dirender oleh JavaScript -->
-    <section id="players" class="players" aria-label="Papan skor pemain"></section>
+      <!-- Kartu pemain (dengan skor sebagai elemen utama) dirender JavaScript -->
+      <section id="players" class="players" aria-label="Papan skor pemain"></section>
 
-    <!-- Riwayat singkat di layar utama -->
-    <section class="panel panel-history" aria-labelledby="recentTitle">
-      <div class="panel-head">
-        <h2 id="recentTitle" class="panel-title">Riwayat</h2>
-        <button id="btnHistory" class="btn btn-small" type="button" aria-haspopup="dialog">Lihat Semua</button>
+      <!-- Aksi ronde: mengisi input pemain lalu menekan Perbarui mencatat SATU ronde.
+           Input kosong TIDAK dianggap 0 (pemain itu tidak ikut dalam ronde). -->
+      <section class="panel panel-round" aria-labelledby="roundTitle">
+        <div class="panel-head">
+          <h2 id="roundTitle" class="panel-title">Catat Skor</h2>
+          <span class="round-hint">Input kosong dilewati</span>
+        </div>
+        <button id="btnAddRound" class="btn btn-primary btn-block" type="button">Perbarui</button>
+      </section>
+
+      <!-- Riwayat singkat di layar utama; tombol "Semua" membuka tab Riwayat. -->
+      <section class="panel panel-history" aria-labelledby="recentTitle">
+        <div class="panel-head">
+          <h2 id="recentTitle" class="panel-title">Riwayat Terbaru</h2>
+          <button id="btnHistory" class="link-btn" type="button">Semua</button>
+        </div>
+        <ul id="recentList" class="history-list" aria-live="polite"></ul>
+        <p id="recentEmpty" class="empty-note">Belum ada perubahan skor.</p>
+      </section>
+
+      <!-- Aksi halaman: "Lihat Hasil" (muncul setelah permainan selesai).
+           "Permainan Baru" kini berada di layar Pengaturan. -->
+      <div class="app-actions">
+        <button id="btnWinner" class="btn btn-primary" type="button" hidden>Lihat Hasil</button>
       </div>
-      <ul id="recentList" class="history-list" aria-live="polite"></ul>
-      <p id="recentEmpty" class="empty-note">Belum ada perubahan skor.</p>
     </section>
 
-    <!-- Aksi halaman: "Lihat Hasil" sekunder, "Permainan Baru" destruktif. -->
-    <div class="app-actions">
-      <button id="btnWinner" class="btn btn-alt" type="button" hidden>Lihat Hasil</button>
-      <button id="btnNewGame" class="btn btn-danger" type="button">Permainan Baru</button>
-    </div>
+    <!-- ------------------------------ RIWAYAT ------------------------------ -->
+    <!-- Daftar aktivitas: satu baris ringkas per perubahan skor (bukan tabel). -->
+    <section id="historyModal" class="screen" aria-labelledby="historyTitle" hidden>
+      <div class="screen-head">
+        <h2 id="historyTitle" class="screen-title">Riwayat</h2>
+        <button id="btnClearHistory" class="link-btn is-danger" type="button">Hapus</button>
+      </div>
+      <ul id="historyFullList" class="history-list history-list-full"></ul>
+      <p id="historyEmpty" class="empty-note">Belum ada perubahan skor.</p>
+    </section>
+
+    <!-- ----------------------------- STATISTIK ----------------------------- -->
+    <!-- Statistik dihitung dari riwayat skor yang sudah tersimpan (localStorage). -->
+    <section id="statsModal" class="screen" aria-labelledby="statsTitle" hidden>
+      <div class="screen-head">
+        <h2 id="statsTitle" class="screen-title">Statistik</h2>
+      </div>
+      <p class="screen-sub" id="statsSummary"></p>
+
+      <p id="statsLeaders" class="stats-leaders" hidden></p>
+
+      <ol id="statsList" class="stats-list"></ol>
+      <p id="statsEmpty" class="empty-note">Belum ada riwayat skor. Statistik muncul setelah ada pencatatan skor.</p>
+    </section>
+
+    <!-- ----------------------------- PENGATURAN ---------------------------- -->
+    <section id="settingsModal" class="screen" aria-labelledby="settingsTitle" hidden>
+      <div class="screen-head">
+        <h2 id="settingsTitle" class="screen-title">Pengaturan</h2>
+      </div>
+
+      <p class="section-label">Pemain &amp; Poin</p>
+      <p class="modal-note">Nama pemain tersimpan otomatis. Target poin berlaku setelah menekan <strong>Simpan</strong>.</p>
+      <form id="settingsForm" class="settings-form" autocomplete="off"></form>
+
+      <p class="section-label">Permainan</p>
+      <p class="modal-note">Mengosongkan skor &amp; riwayat. Nama pemain tetap tersimpan.</p>
+      <button id="btnNewGame" class="btn btn-danger btn-block" type="button">Permainan Baru</button>
+
+      <p class="section-label">Changelog</p>
+      <section class="panel panel-changelog" aria-labelledby="changelogTitle">
+        <h2 id="changelogTitle" class="sr-only">Changelog</h2>
+        <ul id="changelogList" class="changelog-list"></ul>
+      </section>
+
+      <p class="app-footer">&copy; <span id="year">2026</span> Remiku &middot; Powered by zkvoid</p>
+    </section>
+
   </main>
 
-  <!-- ============================ FOOTER ============================ -->
-  <footer class="app-footer">
-    <p>&copy; <span id="year">2026</span> Remiku &middot; Powered by zkvoid</p>
-  </footer>
+  <!-- ========================= BOTTOM NAVIGATION ========================= -->
+  <!-- Navigasi utama aplikasi: satu tap untuk berpindah layar. -->
+  <nav class="tabbar" aria-label="Navigasi utama">
+    <button class="tab is-active" type="button" data-tab="main" aria-current="page">
+      <span class="tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.4 12 3l9 7.4"/><path d="M5.5 9.2V21h13V9.2"/></svg>
+      </span>
+      <span class="tab-label">Main</span>
+    </button>
+    <button class="tab" type="button" data-tab="history">
+      <span class="tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3.5 4v4.5H8"/><path d="M12 8v4.5l3 1.8"/></svg>
+      </span>
+      <span class="tab-label">Riwayat</span>
+    </button>
+    <button class="tab" type="button" data-tab="stats">
+      <span class="tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="15"/></svg>
+      </span>
+      <span class="tab-label">Statistik</span>
+    </button>
+    <button class="tab" type="button" data-tab="settings">
+      <span class="tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </span>
+      <span class="tab-label">Pengaturan</span>
+    </button>
+  </nav>
 
   <!-- Toast singkat untuk umpan balik umum -->
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-  <!-- ======================= MODAL: PENGATURAN ====================== -->
-  <div class="modal" id="settingsModal" hidden>
-    <div class="modal-backdrop" data-close="settingsModal"></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-      <h2 id="settingsTitle" class="modal-title">Pengaturan Pemain</h2>
-      <p class="modal-note">Nama tersimpan otomatis. Mengubah nama tidak mengubah skor.</p>
-      <form id="settingsForm" class="settings-form" autocomplete="off"></form>
-      <div class="modal-actions">
-        <button id="btnCloseSettings" class="btn btn-plain btn-block" type="button">Tutup</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ======================== MODAL: RIWAYAT ======================== -->
-  <div class="modal" id="historyModal" hidden>
-    <div class="modal-backdrop" data-close="historyModal"></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
-      <h2 id="historyTitle" class="modal-title">Riwayat Skor</h2>
-      <ul id="historyFullList" class="history-list history-list-full"></ul>
-      <p id="historyEmpty" class="empty-note">Belum ada perubahan skor.</p>
-      <div class="modal-actions">
-        <button id="btnClearHistory" class="btn btn-danger" type="button">Hapus Riwayat</button>
-        <button id="btnCloseHistory" class="btn btn-plain" type="button">Tutup</button>
-      </div>
-    </div>
-  </div>
+  <!-- Riwayat, Statistik, dan Pengaturan kini berupa layar (screen) di dalam
+       <main> di atas — bukan lagi bottom-sheet modal. -->
 
   <!-- ========================= MODAL: HASIL ========================= -->
   <div class="modal" id="winnerModal" hidden>
     <div class="modal-backdrop"></div>
     <div class="modal-card modal-winner" role="dialog" aria-modal="true" aria-labelledby="winnerTitle">
-      <p class="winner-brand" aria-label="Remiku">
-        <span class="brand-remi">Remi</span><span class="brand-ku">ku</span>
-      </p>
+      <div class="winner-brand" aria-label="Remiku">
+        <span class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <rect class="logo-card-back" x="8.4" y="2.8" width="11" height="15.2" rx="2.2"/>
+            <rect class="logo-card-front" x="4.6" y="5.2" width="11" height="15.2" rx="2.2"/>
+            <path class="logo-heart" d="M10.1 16.2c-1.8-1.3-3-2.4-3-4 0-1.1.9-2 2-2 .6 0 1.2.3 1.6.9.4-.6 1-.9 1.6-.9 1.1 0 2 .9 2 2 0 1.6-1.2 2.7-3 4l-.6.4z"/>
+          </svg>
+        </span>
+        <span class="brand-wordmark"><span class="brand-remi">Remi</span><span class="brand-ku">ku</span></span>
+      </div>
+      <!-- Versi + kredit tepat di bawah logo (id diisi ulang oleh renderVersion()). -->
+      <p class="winner-meta"><span id="winnerVersion">v1.4</span> &middot; zkvoid</p>
       <p class="winner-kicker" id="winnerTitle">Hasil Permainan</p>
       <p class="winner-trophy" aria-hidden="true">&#127942;</p>
 
@@ -113,6 +192,15 @@
         <p class="winner-flag">Pemenang</p>
         <p class="winner-name" id="winnerName">&mdash;</p>
         <p class="winner-score" id="winnerScore">1000 poin</p>
+      </div>
+
+      <!-- Kartu kedua layar hasil: Pengocok Handal (tepat di bawah pemenang).
+           Kartu ini SELALU tampil; diberi kelas .is-empty (gaya netral) bila
+           belum ada pemain dengan rentetan >= 4 ronde. -->
+      <div class="handal-box" id="winnerHandalBox">
+        <p class="handal-flag">Pengocok Handal</p>
+        <p class="handal-name" id="winnerHandalName">&mdash;</p>
+        <p class="handal-meta" id="winnerHandalMeta"></p>
       </div>
 
       <h3 class="winner-subtitle">Ranking</h3>

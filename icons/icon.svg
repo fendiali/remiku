@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="512" height="512" role="img" aria-label="Remiku">
+  <!-- Ikon aplikasi = logo kartu Remi yang sama dengan header (index.html).
+       Bentuk & warna identik; hanya ditambahkan latar putih penuh agar aman
+       dipakai sebagai ikon PWA/maskable dan favicon. -->
+  <rect width="24" height="24" fill="#ffffff"/>
+  <g transform="translate(12 12) scale(1.08) translate(-12 -11.6)">
+    <rect x="8.4" y="2.8" width="11" height="15.2" rx="2.2" fill="#ff4d9d"/>
+    <rect x="4.6" y="5.2" width="11" height="15.2" rx="2.2" fill="#ffffff" stroke="#16181d" stroke-width="1.4"/>
+    <path d="M10.1 16.2c-1.8-1.3-3-2.4-3-4 0-1.1.9-2 2-2 .6 0 1.2.3 1.6.9.4-.6 1-.9 1.6-.9 1.1 0 2 .9 2 2 0 1.6-1.2 2.7-3 4l-.6.4z" fill="#ff4d9d"/>
+  </g>
+</svg>

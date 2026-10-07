@@ -19,3 +19,7 @@ yarn-error.log*
 *.log
 tmp/
 dist/
+
+# ------------------------------------ Perkakas dev (bukan production) -------
+tests/
+tools/

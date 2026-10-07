@@ -18,7 +18,7 @@
 
 'use strict';
 
-const CACHE_NAME = 'remiku-v4';
+const CACHE_NAME = 'remiku-v12';
 
 /* Aset inti (app shell). Semua relatif terhadap scope service worker. */
 const APP_SHELL = [
@@ -27,6 +27,7 @@ const APP_SHELL = [
   './manifest.json',
   './css/style.css',
   './js/app.js',
+  './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];

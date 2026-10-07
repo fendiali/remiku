@@ -15,25 +15,36 @@
 /* Blok ini MURNI logika (tanpa DOM / localStorage) agar dapat diuji terpisah. */
 
 /* ------------------------------- KONSTANTA ------------------------------- */
-const TARGET_SCORE = 1000;    // Skor yang dibutuhkan untuk menang.
+const TARGET_SCORE = 1000;    // Target BAWAAN (dapat diubah pengguna lewat Pengaturan).
 const MILESTONE_START = 500;  // Awal rentang milestone khusus (500-999).
 const MILESTONE_END = 999;    // Akhir rentang milestone khusus.
 const PLAYER_COUNT = 4;       // Jumlah pemain tetap.
+const HANDAL_STREAK_MIN = 4;  // "Pengocok Handal": TOTAL skor terendah BERTURUT-TURUT selama >= 4 ronde.
 const STORAGE_KEY = 'remiku_data_v1';
 const DATA_VERSION = 1;
 const HISTORY_LIMIT = 500;    // Batas entri riwayat (agar localStorage tetap ringan).
 const NAME_MAX = 24;          // Panjang maksimum nama pemain.
 const MAX_ABS_INPUT = 100000; // Batas wajar nilai input (mencegah input absurd).
+const MAX_TARGET_SCORE = 1000000; // Batas wajar target poin kustom (setting "Target Poin").
 const DEFAULT_NAMES = ['Pemain 1', 'Pemain 2', 'Pemain 3', 'Pemain 4'];
 
 /**
  * Preset tombol skor cepat (urutan array = urutan tampil):
  *   [-35] [-40] [+250] [+300]
- * PENTING: keempat tombol hanya memanggil addScore() yang SAMA seperti input
- * manual, sehingga milestone/overtake/reset/winner/history tetap berjalan
- * tanpa logika scoring terpisah.
+ * PENTING: keempat tombol hanya MENGISI input sementara pemain (belum masuk
+ * permainan). Skor benar-benar dicatat saat tombol Tambah ditekan sebagai satu
+ * ronde, sehingga milestone/overtake/reset/winner/history tetap satu jalur.
  */
 const QUICK_PRESETS = [-35, -40, 250, 300];
+
+/**
+ * Jeda maksimum (ms) antar-pencatatan skor yang MASIH dianggap satu "ronde".
+ * Dipakai HANYA sebagai lapisan kedua saat menyimpulkan batas ronde dari riwayat.
+ * Lapisan utama: seorang pemain idealnya mencatat skor maksimal sekali per ronde,
+ * jadi pencatatan berulang oleh pemain yang sama menandai ronde baru.
+ * Lihat groupHistoryIntoRounds().
+ */
+const ROUND_GAP_MS = 2 * 60 * 1000;
 
 /**
  * State default sekaligus dokumentasi struktur data yang disimpan.
@@ -43,6 +54,7 @@ const QUICK_PRESETS = [-35, -40, 250, 300];
  *   scores:  number[4],                       // skor terkini
  *   reach:   { "<milestone>": [index, ...] },  // URUTAN pemain yang pertama mencapai skor m
  *   history: Event[],                          // riwayat perubahan skor
+ *   target:  number,                           // target poin aktif (bawaan 1000, dapat diubah)
  *   gameActive: boolean,                       // false bila permainan sudah selesai
  *   winner:  null | { player, score, at }
  * }
@@ -59,6 +71,7 @@ function createDefaultState() {
     scores: new Array(PLAYER_COUNT).fill(0),
     reach: {},
     history: [],
+    target: TARGET_SCORE, // target poin aktif (dinamis; bawaan 1000)
     gameActive: true,
     winner: null
   };
@@ -88,8 +101,8 @@ function registerMilestones(state, playerIndex, oldScore, newScore) {
 }
 
 /* --------------------------- OVERTAKE DETECTION ---------------------------
- * "Menyalip" = SEBELUMNYA skor pemain <= skor lawan, dan SEKARANG menjadi >.
- * Dengan definisi ini, berakhir seri (tie) BUKAN penyalipan sehingga tidak
+ * "Overtakes" = SEBELUMNYA skor pemain <= skor lawan, dan SEKARANG menjadi >.
+ * Dengan definisi ini, berakhir seri (tie) BUKAN overtake sehingga tidak
  * akan memicu reset.
  */
 function detectOvertakenPlayers(state, playerIndex, oldScore, newScore) {
@@ -102,7 +115,14 @@ function detectOvertakenPlayers(state, playerIndex, oldScore, newScore) {
   return result;
 }
 
-/** Pemain yang PALING DULU mencapai milestone `m` (null bila belum ada). */
+/**
+ * Pemain yang PALING DULU mencapai milestone `m` (null bila belum ada).
+ *
+ * Inilah "pemilik milestone" yang dipakai determineResets(): seorang pemain
+ * direset saat overtaken HANYA jika ia pemilik milestone sebesar skornya saat itu.
+ * `state.reach` terus diisi oleh registerMilestones() agar urutan "siapa datang
+ * lebih dulu" tetap adil walau skor pemain sempat turun.
+ */
 function milestoneOwner(state, milestone) {
   const list = state.reach[String(milestone)];
   return list && list.length ? list[0] : null;
@@ -111,36 +131,54 @@ function milestoneOwner(state, milestone) {
 /**
  * Menentukan pemain yang harus RESET (ke 0) akibat satu aksi penambahan skor.
  *
- * ATURAN INTI (jangan disederhanakan menjadi "skor lebih kecil = reset"):
- *  - Reset hanya berlaku untuk pemain yang DISALIP pada aksi ini.
- *  - Pemain Q yang disalip hanya direset bila Q adalah pemain yang PALING DULU
- *    mencapai milestone sebesar skor Q saat ini. Milestone itulah yang sedang
- *    diperebutkan; Q yang datang lebih dulu "kehilangan" miliknya karena disalip.
- *  - Pemain yang datang BELAKANGAN pada milestone tersebut TIDAK direset.
- *  - Tie bukan penyalipan (lihat detectOvertakenPlayers), jadi tidak memicu reset.
- *  - Skor di luar rentang milestone (mis. < 500) tidak memicu reset.
+ * ATURAN INTI — berbasis KEPEMILIKAN MILESTONE (rentang 500-999):
+ *  - Reset hanya berlaku untuk pemain yang OVERTAKEN pada aksi ini.
+ *  - "Overtaken" berarti: skor penyerang SEBELUM penambahan <= skor lawan, dan
+ *    skor penyerang SESUDAH penambahan > skor lawan (lihat detectOvertakenPlayers).
+ *    Berakhir SERI bukan overtake, jadi tidak memicu reset.
+ *  - Pemain yang overtaken direset HANYA bila ia PEMILIK milestone sebesar skornya
+ *    saat ini (yang PALING DULU mencapai skor itu). Pemain yang mencapai nilai
+ *    itu BELAKANGAN tidak direset meski ikut overtaken.
+ *  - Batas rentang 500-999: skor < 500 / > 999 bukan milestone sehingga tidak
+ *    memicu reset; skor TEPAT 500 MEMICU reset. Batas ini dijaga karena
+ *    milestoneOwner() hanya mengenal milestone di dalam rentang tersebut.
+ *  - Penyerang TIDAK pernah direset; pemain lain yang tidak overtaken tidak berubah.
  *
- * Contoh nyata:
- *   A = 800 (pencapai 800 pertama), B = 700. B +100 -> 800 (tie, tidak reset).
- *   B +1 -> 801. B menyalip A. Skor A = 800 dan A adalah pencapai 800 pertama,
- *   maka A reset ke 0.
+ * Contoh (A menyerang; kepemilikan dinilai SEBELUM penambahan):
+ *   A = 600 (pemilik 600), B = 600 (bukan pemilik), C = 740. A +200 -> 800.
+ *   A overtakes B, tetapi B bukan pemilik milestone 600 -> B TIDAK direset.
+ *   A belum melewati C (740), jadi C tetap.
  */
 function determineResets(state, overtaken) {
   const resets = [];
   for (let i = 0; i < overtaken.length; i++) {
     const q = overtaken[i];
     if (resets.indexOf(q) !== -1) continue; // jaminan: maksimal SEKALI per pemain per aksi
-    const milestone = state.scores[q]; // skor Q saat disalip = milestone yang diperebutkan
-    if (milestone < MILESTONE_START || milestone > MILESTONE_END) continue;
-    if (milestoneOwner(state, milestone) === q) resets.push(q);
+    // Reset hanya bila pemain yang overtaken adalah PEMILIK milestone sebesar
+    // skornya saat ini. `state.scores[q]` belum tersentuh aksi ini (hanya skor
+    // penyerang yang diubah), jadi nilainya = skor lawan sebelum penambahan.
+    // milestoneOwner() mengembalikan null untuk skor di luar 500-999, sehingga
+    // batas rentang otomatis terjaga di sini.
+    if (milestoneOwner(state, state.scores[q]) === q) resets.push(q);
   }
   return resets;
 }
 
 /**
+ * Target poin aktif untuk sebuah state.
+ * Target disimpan DI DALAM state (`state.target`) agar ikut tersimpan/dipulihkan
+ * lewat mekanisme localStorage yang sudah ada. Bila nilai target tidak valid
+ * (mis. data dari versi lama), dipakai TARGET_SCORE sebagai fallback aman.
+ */
+function targetOf(state) {
+  const t = state ? state.target : null;
+  return (Number.isInteger(t) && t > 0 && t <= MAX_TARGET_SCORE) ? t : TARGET_SCORE;
+}
+
+/**
  * Deteksi pemenang.
  * Pada aplikasi ini HANYA SATU pemain yang berubah skornya per aksi, sehingga
- * pemenang adalah pemain dengan skor tertinggi bila skor itu >= TARGET_SCORE.
+ * pemenang adalah pemain dengan skor tertinggi bila skor itu >= target aktif.
  * Tie-breaker (mis. saat memulihkan data rusak): index terkecil — dipilih agar
  * perilaku tetap deterministik.
  */
@@ -156,7 +194,7 @@ function checkWinner(state) {
     }
   }
 
-  if (bestScore >= TARGET_SCORE) {
+  if (bestScore >= targetOf(state)) {
     state.winner = { player: best, score: bestScore, at: Date.now() };
     state.gameActive = false;
     return state.winner;
@@ -179,18 +217,249 @@ function computeRanking(state) {
     });
 }
 
+/* ----------------------------- STATISTIK RONDE ----------------------------
+ * Statistik pemain (Ngocok, Skor Shutout, Pengocok Handal) dihitung
+ * dari `state.history` yang SUDAH tersimpan — tidak ada penghitung terpisah
+ * yang bisa tidak sinkron. Tidak ada struktur localStorage baru untuk statistik.
+ *
+ * Batas ronde ditentukan dengan dua cara:
+ *   1) UTAMA: setiap event menyimpan `round` (id ronde dari satu klik Tambah).
+ *      Event dengan `round` sama = satu ronde. Data baru selalu memakai ini.
+ *   2) CADANGAN (data lama sebelum flow ronde): `round` belum ada, sehingga
+ *      batas ronde disimpulkan dengan aman:
+ *        a) nama pemain idealnya dicatat sekali per ronde — event berulang oleh
+ *           pemain yang sudah tercatat menandai ronde baru;
+ *        b) jeda waktu antar-event melewati ROUND_GAP_MS -> sesi baru = ronde baru.
+ * Skor 250/300 (kemenangan ronde) TIDAK membatalkan perhitungan: ronde itu tetap
+ * dihitung, dan Ngocok-nya mengikuti TOTAL skor terendah seperti ronde lain.
+ */
+
+/** true bila `round` (array event) sudah memuat pencatatan milik `player`. */
+function roundIncludesPlayer(round, player) {
+  for (let i = 0; i < round.length; i++) {
+    if (round[i].player === player) return true;
+  }
+  return false;
+}
+
+/**
+ * Menyusun array ronde dari riwayat. Tiap ronde = array event (urut waktu naik).
+ * Lihat catatan "STATISTIK RONDE" di atas untuk aturan batas ronde.
+ */
+function groupHistoryIntoRounds(history) {
+  const list = Array.isArray(history) ? history : [];
+  const rounds = [];
+  let current = null;
+  let lastTs = 0;
+  let lastRoundId = null; // null = ronde disimpulkan heuristik (data lama)
+
+  for (let i = 0; i < list.length; i++) {
+    const event = list[i];
+    const ts = Number(event && event.ts);
+    const stamp = Number.isFinite(ts) ? ts : 0;
+    const roundId = (event && event.round !== undefined && event.round !== null)
+      ? String(event.round)
+      : null;
+
+    let startNew;
+    if (current === null) {
+      startNew = true;
+    } else if (roundId !== null || lastRoundId !== null) {
+      // Salah satu (atau kedua) ronde memakai penanda eksplisit -> bandingkan id.
+      startNew = roundId !== lastRoundId;
+    } else {
+      // Keduanya data lama -> simpulkan batas ronde dari heuristik.
+      const repeatedPlayer = roundIncludesPlayer(current, event && event.player);
+      const newSession = (stamp - lastTs) > ROUND_GAP_MS;
+      startNew = repeatedPlayer || newSession;
+    }
+
+    if (startNew) {
+      current = [];
+      rounds.push(current);
+      lastRoundId = roundId;
+    }
+
+    current.push(event);
+    lastTs = stamp;
+  }
+
+  return rounds;
+}
+
+/**
+ * Menghitung statistik tiap pemain dari riwayat event, lalu menentukan
+ * "Pengocok Handal": SATU pemain yang paling lama berada di posisi TOTAL skor
+ * terendah secara BERTURUT-TURUT (badge ini khusus untuk 1 pemain). SERI di
+ * posisi terendah TETAP dihitung. Syaratnya: rentetan >= HANDAL_STREAK_MIN
+ * (yaitu 4 ronde berturut-turut).
+ *
+ * Untuk setiap ronde dihitung skor tiap pemain = jumlah `delta` yang ia catat
+ * di ronde itu (pada flow ronde nilainya satu: mis. 250/300 atau -35/-40).
+ * Pemain dengan input KOSONG tidak ikut dihitung (bukan skor 0).
+ *
+ * Definisi:
+ *   - counts[i]  = "Ngocok": berapa kali pemain i berada di posisi TOTAL skor
+ *                  TERENDAH pada sebuah ronde. Dihitung dari TOTAL skor berjalan
+ *                  (BUKAN dari skor rondenya), dan berlaku untuk SEMUA pemain —
+ *                  termasuk yang TIDAK mencatat skor di ronde itu — sebab posisi
+ *                  terendah ditentukan oleh TOTAL, bukan oleh siapa yang mengubah
+ *                  skornya. Ronde dihitung selama ADA skor tercatat (sekalipun
+ *                  hanya satu pencatat: satu kali [Perbarui] = satu ronde) DAN
+ *                  total antar-pemain tidak semuanya seri. Bila seri di posisi
+ *                  terendah, SEMUA yang seri mendapat +1.
+ *   - perfect[i] = "Skor Shutout": berapa kali skor pemain i = 250 atau 300.
+ *   - leaders    = [index] (0 atau TEPAT 1 elemen) = pemain "Pengocok Handal",
+ *                  yaitu pemain yang paling lama berada di posisi TOTAL skor
+ *                  terendah secara BERTURUT-TURUT selama >= 4 ronde. SERI di
+ *                  posisi terendah TETAP dihitung (rentetan tidak putus), jadi
+ *                  satu pemain bisa menyandangnya walau beberapa ronde ia
+ *                  terendah BERSAMA pemain lain. Bila beberapa pemain punya
+ *                  rentetan sama-sama terpanjang, dipilih yang paling awal
+ *                  (index terkecil). [] bila tak ada yang melewati ambang.
+ *   - streak     = panjang rentetan yang membuat leaders[0] menjadi Pengocok
+ *                  Handal (0 bila leaders kosong).
+ *   - candidate  = index pemain dengan rentetan TERPANJANG saat ini walau BELUM
+ *                  mencapai ambang (>= 4). Dipakai layar Statistik untuk
+ *                  menampilkan "pemimpin sementara" sebelum ada yang resmi jadi
+ *                  Pengocok Handal. -1 bila belum ada ronde yang bisa dihitung.
+ *   - candidateStreak = panjang rentetan candidate (0 bila candidate = -1).
+ *
+ * Baik `counts` (Ngocok) MAUPUN rentetan "Pengocok Handal" dihitung dari TOTAL
+ * skor berjalan tiap ronde, yang direkonstruksi dari `delta` + `resets` tiap
+ * event. Dengan begitu pengocok bisa tetap sama walau skor rondenya naik-turun,
+ * selama TOTAL-nya tetap terendah. Sebuah ronde TIDAK menambah Ngocok kepada
+ * siapa pun DAN "memutus" rentetan HANYA bila semua pemain totalnya sama (tak ada
+ * yang benar-benar di bawah). Ronde dengan SATU pencatat TETAP dihitung (satu
+ * [Perbarui] = satu ronde).
+ *
+ * Mengembalikan { rounds, counts, perfect, leaders, streak, candidate,
+ * candidateStreak }:
+ *   - rounds : banyak ronde yang bisa dihitung (memiliki skor tercatat).
+ */
+function computePlayerStats(history) {
+  const counts = new Array(PLAYER_COUNT).fill(0);
+  const perfect = new Array(PLAYER_COUNT).fill(0);
+  const totals = new Array(PLAYER_COUNT).fill(0); // TOTAL skor berjalan (termasuk reset)
+  const rounds = groupHistoryIntoRounds(history);
+  let countedRounds = 0;
+
+  // Rentetan "Pengocok Handal": tiap pemain punya penghitung rentetannya SENDIRI.
+  // Sebuah ronde dihitung selama ADA skor tercatat (sekalipun 1 pemain) DAN total
+  // antar-pemain TIDAK semuanya seri. Semua pemain yang TOTAL-nya terendah (boleh SERI) mendapat
+  // +1; pemain lain direset ke 0. Dengan begitu pemain yang konsisten berada di
+  // posisi bawah tetap mengumpulkan rentetan walau beberapa ronde ia terendah
+  // bersama pemain lain.
+  const streakLen = new Array(PLAYER_COUNT).fill(0);
+  let bestOwner = -1;
+  let bestLen = 0;
+
+  for (let r = 0; r < rounds.length; r++) {
+    const events = rounds[r];
+    const roundScore = new Array(PLAYER_COUNT).fill(null); // null = tak mencatat skor
+    let hasScore = false;
+
+    for (let e = 0; e < events.length; e++) {
+      const ev = events[e];
+      const p = ev.player;
+      const delta = Number(ev.delta);
+      if (!Number.isInteger(p) || p < 0 || p >= PLAYER_COUNT) continue;
+      if (!Number.isFinite(delta)) continue;
+      if (roundScore[p] === null) roundScore[p] = 0;
+      roundScore[p] += delta;
+      hasScore = true;
+      // Rekonstruksi TOTAL skor: tambah `delta`, lalu terapkan reset yang tercatat.
+      totals[p] += delta;
+      const resets = Array.isArray(ev.resets) ? ev.resets : [];
+      for (let q = 0; q < resets.length; q++) {
+        const rp = resets[q] && resets[q].player;
+        if (Number.isInteger(rp) && rp >= 0 && rp < PLAYER_COUNT) totals[rp] = 0;
+      }
+    }
+
+    // Ronde tanpa skor tercatat dilewati -> tidak ada angka palsu.
+    if (!hasScore) continue;
+    countedRounds++;
+
+    // Skor Shutout: nilai ronde seorang pemain = 250 atau 300.
+    for (let i = 0; i < PLAYER_COUNT; i++) {
+      if (roundScore[i] === 250 || roundScore[i] === 300) perfect[i]++;
+    }
+
+    // "Ngocok" (counts) DAN "Pengocok Handal" (rentetan) sama-sama ditentukan
+    // oleh TOTAL skor berjalan ronde ini, BUKAN skor ronde. Pemain dengan TOTAL
+    // terendah mendapat +1 Ngocok (walau ia tidak mencatat skor di ronde ini) dan
+    // rentetannya bertambah. Ronde dihitung selama ADA skor tercatat (sekalipun
+    // hanya satu pemain) DAN total antar-pemain tidak semuanya seri (ada pemilik
+    // terendah yang jelas); ronde "semua total seri" tak punya pemilik terendah
+    // -> tidak menambah Ngocok kepada siapa pun sekaligus memutus rentetan. SERI
+    // di posisi terendah TETAP dihitung -> semua yang seri dapat +1.
+    let low = Infinity;
+    let high = -Infinity;
+    for (let i = 0; i < PLAYER_COUNT; i++) {
+      if (totals[i] < low) low = totals[i];
+      if (totals[i] > high) high = totals[i];
+    }
+    const countable = high > low;
+
+    for (let i = 0; i < PLAYER_COUNT; i++) {
+      if (countable && totals[i] === low) {
+        counts[i] += 1;       // Ngocok: pemilik TOTAL terendah ronde ini.
+        streakLen[i] += 1;    // Rentetan "Pengocok Handal".
+        // Hanya diperbarui saat STRICTLY lebih panjang -> index terkecil menang
+        // saat panjang rentetan seri (dan yang lebih dulu mencapai juga menang).
+        if (streakLen[i] > bestLen) {
+          bestLen = streakLen[i];
+          bestOwner = i;
+        }
+      } else {
+        streakLen[i] = 0;
+      }
+    }
+  }
+
+  // "Pengocok Handal" HANYA untuk pemain dengan rentetan >= HANDAL_STREAK_MIN
+  // (yaitu 4 ronde berturut-turut). Tepat satu pemain; rentetan terpanjang
+  // menang (seri -> yang paling awal / index terkecil). leaders = [] bila tak ada.
+  const leaders = [];
+  let streak = 0;
+  if (bestOwner !== -1 && bestLen >= HANDAL_STREAK_MIN) {
+    leaders.push(bestOwner);
+    streak = bestLen;
+  }
+
+  return {
+    rounds: countedRounds,
+    counts: counts,
+    perfect: perfect,
+    leaders: leaders,
+    streak: streak,
+    // Pemimpin sementara: pemain dengan rentetan TERPANJANG walau belum
+    // mencapai ambang. Dipakai layar Statistik agar info "siapa calon Pengocok
+    // Handal" tetap ada walau belum ada yang menembus >= 4 ronde. bestOwner = -1
+    // bila belum ada satu pun ronde yang bisa dihitung.
+    candidate: bestOwner,
+    candidateStreak: bestLen
+  };
+}
+
 /**
  * Menerapkan perubahan skor secara atomik (tanpa DOM) agar mudah diuji.
  * Urutan pemrosesan:
- *   1. Deteksi penyalipan (dinilai dari skor SEBELUM diubah).
+ *   1. Deteksi overtake (dinilai dari skor SEBELUM diubah).
  *   2. Ubah skor pemain.
  *   3. Catat milestone baru yang dicapai (selalu, walau nanti ada reset).
  *   4. Tentukan & terapkan reset berdasarkan urutan pencapaian milestone.
  *   5. Simpan event ke riwayat.
  *   6. Cek pemenang.
  * Mengembalikan objek hasil agar pemanggil bisa memberi umpan balik visual.
+ *
+ * `roundId`/`ts` (opsional) dipakai saat satu klik Tambah mencatat BEBERAPA
+ * pemain sekaligus: seluruh event dari klik yang sama diberi `round` yang sama
+ * agar tetap terbaca sebagai satu ronde. Bila tidak diberikan, event berdiri
+ * sendiri (perilaku lama tetap utuh).
  */
-function applyScoreChange(state, playerIndex, amount) {
+function applyScoreChange(state, playerIndex, amount, roundId, ts) {
   const result = { ok: false, reason: null, event: null, resets: [], winner: null };
 
   if (!state.gameActive) {
@@ -210,7 +479,7 @@ function applyScoreChange(state, playerIndex, amount) {
   const oldScore = state.scores[playerIndex];
   const newScore = oldScore + amount;
 
-  // (1) Penyalipan dinilai dari kondisi SEBELUM skor berubah.
+  // (1) Overtake dinilai dari kondisi SEBELUM skor berubah.
   const overtaken = detectOvertakenPlayers(state, playerIndex, oldScore, newScore);
 
   // (2) Terapkan skor baru.
@@ -229,15 +498,18 @@ function applyScoreChange(state, playerIndex, amount) {
     resetInfo.push({ player: q, by: playerIndex, from: from, to: 0, milestone: from });
   }
 
-  // (5) Riwayat.
+  // (5) Riwayat. `round` menandai event-event dari SATU klik Tambah (satu ronde),
+  // sehingga batas ronde tidak perlu disimpulkan ulang saat statistik dihitung.
+  const stamp = Number.isFinite(ts) ? ts : Date.now();
   const event = {
-    ts: Date.now(),
+    ts: stamp,
     player: playerIndex,
     delta: amount,
     from: oldScore,
     to: newScore,
     resets: resetInfo
   };
+  if (roundId !== undefined && roundId !== null) event.round = roundId;
   state.history.push(event);
   if (state.history.length > HISTORY_LIMIT) {
     state.history.splice(0, state.history.length - HISTORY_LIMIT);
@@ -248,8 +520,84 @@ function applyScoreChange(state, playerIndex, amount) {
 
   result.ok = true;
   result.event = event;
+  result.events = [event];
   result.resets = resetInfo;
   result.winner = winner;
+  return result;
+}
+
+/**
+ * Menerapkan SATU RONDE — kumpulan skor dari satu klik "Tambah" — secara atomik
+ * (tanpa DOM). Ini adalah jalur utama pencatatan skor pada flow baru.
+ *
+ * `entries` = array { player, amount } untuk pemain yang inputnya TERISI.
+ * Pemain dengan input kosong TIDAK ikut (tidak dianggap skor 0).
+ *
+ * Setiap pemain diproses memakai applyScoreChange() yang SAMA, berurutan menurut
+ * indeks pemain, dengan `round` id yang sama. Dengan begitu aturan milestone/
+ * overtake/reset/pemenang yang sudah berjalan TIDAK berubah — flow ronde hanya
+ * menggabungkan beberapa pencatatan menjadi satu event.
+ *
+ * Mengembalikan { ok, reason, events[], resets[], winner }.
+ */
+function applyRound(state, entries, at) {
+  const result = { ok: false, reason: null, events: [], resets: [], winner: null };
+
+  if (!state.gameActive) {
+    result.reason = 'game-over';
+    return result;
+  }
+  if (!Array.isArray(entries)) {
+    result.reason = 'bad-round';
+    return result;
+  }
+
+  // Susun daftar entri valid: pemain unik, delta bulat & bukan 0.
+  const valid = [];
+  for (let i = 0; i < entries.length; i++) {
+    const raw = entries[i];
+    if (!raw || typeof raw !== 'object') continue;
+
+    const p = Math.trunc(Number(raw.player));
+    const d = Math.trunc(Number(raw.amount));
+    if (!Number.isInteger(p) || p < 0 || p >= PLAYER_COUNT) continue;
+    if (!Number.isInteger(d) || d === 0) continue;
+
+    let duplicated = false;
+    for (let j = 0; j < valid.length; j++) {
+      if (valid[j].player === p) { duplicated = true; break; }
+    }
+    if (duplicated) continue;
+
+    valid.push({ player: p, amount: d });
+  }
+
+  if (valid.length === 0) {
+    result.reason = 'no-input';
+    return result;
+  }
+
+  // Urutkan menurut indeks pemain agar hasil deterministik.
+  valid.sort(function (a, b) { return a.player - b.player; });
+
+  const ts = Number.isFinite(at) ? at : Date.now();
+  const roundId = ts;
+
+  for (let i = 0; i < valid.length; i++) {
+    // Bila permainan berakhir di tengah ronde (mis. skor menembus target),
+    // sisa pemain pada ronde itu tidak lagi dicatat.
+    if (!state.gameActive) break;
+
+    const r = applyScoreChange(state, valid[i].player, valid[i].amount, roundId, ts);
+    if (!r.ok) continue;
+
+    result.events.push(r.event);
+    result.resets = result.resets.concat(r.resets);
+    if (r.winner) result.winner = r.winner;
+  }
+
+  result.ok = result.events.length > 0;
+  if (!result.ok) result.reason = 'no-change';
   return result;
 }
 
@@ -342,6 +690,28 @@ function parseScoreInput(value) {
   return n;
 }
 
+/**
+ * Mengubah teks input "Target Poin" menjadi bilangan bulat positif, atau null
+ * bila tidak valid. Ditolak: kosong, 0, negatif, desimal, NaN/Infinity, dan
+ * nilai di luar batas wajar (MAX_TARGET_SCORE).
+ * Memakai normalizeNumberText yang sama dengan input skor supaya angka fullwidth
+ * dan spasi hasil salin-tempel tetap diterima.
+ */
+function parseTargetInput(value) {
+  if (typeof value !== 'string') return null;
+
+  const v = normalizeNumberText(value);
+  if (v === '') return null;        // kosong
+  if (!/^\+?\d+$/.test(v)) return null; // hanya digit (opsional "+"): menolak negatif & desimal
+
+  const n = Number(v);
+  if (!Number.isInteger(n)) return null;           // NaN / desimal
+  if (n <= 0) return null;                         // 0 dan negatif ditolak
+  if (n > MAX_TARGET_SCORE) return null;           // batas wajar
+
+  return n;
+}
+
 /* === LOGIC-END === */
 
 /* ============================================================================
@@ -350,6 +720,14 @@ function parseScoreInput(value) {
 
 // State global aplikasi (selalu berupa objek valid).
 let state = createDefaultState();
+
+/**
+ * Skor sementara tiap pemain (teks). Nilai di sini BELUM masuk permainan:
+ * hanya diisi lewat input manual atau tombol skor cepat, lalu dikosongkan setelah
+ * tombol Tambah mencatat satu ronde. Dipakai juga saat kartu dirender ulang agar
+ * ketikan yang belum dicatat tidak hilang. TIDAK dipersistensi (bukan bagian data).
+ */
+const pendingScores = new Array(PLAYER_COUNT).fill('');
 
 /**
  * Menyaring satu entri riwayat agar aman dirender.
@@ -375,6 +753,11 @@ function sanitizeHistoryEntry(raw) {
     to: to,
     resets: []
   };
+
+  // Penanda ronde (bila ada): event-event dari satu klik Tambah berbagi id sama.
+  // Data lama tanpa `round` tetap aman (dikelompokkan lewat heuristik statistik).
+  const roundRaw = Number(raw.round);
+  if (Number.isFinite(roundRaw)) entry.round = roundRaw;
 
   if (Array.isArray(raw.resets)) {
     for (let i = 0; i < raw.resets.length; i++) {
@@ -453,6 +836,13 @@ function sanitizeState(raw) {
       if (e) clean.push(e);
     }
     out.history = clean.slice(-HISTORY_LIMIT);
+  }
+
+  // Target poin kustom: hanya bilangan bulat positif yang wajar.
+  // (out.target sudah berisi TARGET_SCORE bawaan dari createDefaultState().)
+  if (raw.target !== undefined && raw.target !== null) {
+    const t = Math.trunc(Number(raw.target));
+    if (Number.isInteger(t) && t > 0 && t <= MAX_TARGET_SCORE) out.target = t;
   }
 
   // Pemenang (bila ada -> permainan sudah selesai).
@@ -601,22 +991,94 @@ function focusPlayerInput(playerIndex) {
  * ==========================================================================*/
 
 /**
- * Peringkat pemain (1..4) memakai computeRanking() yang sudah ada.
- * Tie-breaker TIDAK diubah: tetap mengikuti logika ranking yang berlaku.
+ * Pemain "Pengocok" = yang mengocok kartu untuk ronde berikutnya, yaitu pemilik
+ * skor TERENDAH saat ini. Fungsi ini mengembalikan array berisi MAKSIMAL SATU
+ * pemain:
+ *  - Skor terendah unik -> pemain itu.
+ *  - Skor terendah SERI (mis. Pemain 1 skor shutout sedangkan 3 pemain lain
+ *    draw di 0; atau semua 0-0-0-0 di awal permainan) -> dipilih SATU secara
+ *    ACAK, karena hanya satu orang yang mengocok.
+ * Pilihan disimpan agar tidak berpindah-pindah tiap render: selama pemain yang
+ * dipilih masih termasuk kelompok terendah, ia dipertahankan.
  */
-function playerRank(index) {
-  const ranking = computeRanking(state);
-  for (let i = 0; i < ranking.length; i++) {
-    if (ranking[i].index === index) return i + 1;
+let shufflerPick = null;
+
+function currentLowestPlayers() {
+  let min = Infinity;
+  for (let i = 0; i < PLAYER_COUNT; i++) {
+    if (state.scores[i] < min) min = state.scores[i];
   }
-  return index + 1;
+  const lowest = [];
+  for (let i = 0; i < PLAYER_COUNT; i++) {
+    if (state.scores[i] === min) lowest.push(i);
+  }
+  if (lowest.length === 0) return [];
+
+  // Skor terendah unik -> dialah pengocok.
+  if (lowest.length === 1) {
+    shufflerPick = lowest[0];
+    return lowest;
+  }
+
+  // SERI: pertahankan pilihan sebelumnya bila masih termasuk yang terendah;
+  // jika tidak (atau belum pernah dipilih), pilih satu pemain BARU secara acak.
+  if (shufflerPick === null || lowest.indexOf(shufflerPick) === -1) {
+    shufflerPick = lowest[Math.floor(Math.random() * lowest.length)];
+  }
+  return [shufflerPick];
 }
 
-/** Membuat satu kartu pemain lengkap. */
-function buildPlayerCard(index) {
+/**
+ * Satu badge status di sebelah nama pemain pada kartu (menggantikan badge
+ * peringkat #1..#4 yang lama). HANYA SATU badge per pemain, dengan prioritas:
+ *   1. "PEMENANG"       : pemenang permainan.
+ *   2. "PENGOCOK HANDAL" : SATU pemain yang paling lama berada di posisi TOTAL
+ *                          Ngocok berturut-turut >= 4 ronde (statistik
+ *                          dari riwayat, sumber sama dengan layar Statistik &
+ *                          Hasil). Seri di posisi terendah tetap dihitung.
+ *   3. "PENGOCOK"       : skor TERENDAH saat ini (mengocok ronde berikutnya).
+ * Karena hanya satu yang ditampilkan, pemain yang sekaligus "Pengocok Handal"
+ * dan "Pengocok" cukup tampil sebagai "Pengocok Handal".
+ * Mengembalikan array node badge (kosong bila tidak ada status).
+ */
+function buildCardBadges(status, isWinner, name) {
+  if (isWinner) {
+    return [h('span', {
+      class: 'badge badge-winner',
+      text: 'PEMENANG',
+      title: 'Pemenang permainan'
+    })];
+  }
+
+  const st = status || {};
+
+  // Prioritas: Pengocok Handal > Pengocok (hanya SATU yang tampil).
+  if (st.handal) {
+    const run = st.streak ? ' (' + st.streak + ' ronde berturut-turut)' : '';
+    return [h('span', {
+      class: 'badge badge-handal',
+      text: 'Pengocok Handal',
+      title: name + ': Ngocok berturut-turut' + run,
+      'aria-label': name + ': Pengocok Handal'
+    })];
+  }
+  if (st.pengocok) {
+    return [h('span', {
+      class: 'badge badge-pengocok',
+      text: 'Ngocok',
+      title: name + ': skor terendah, mengocok ronde berikutnya',
+      'aria-label': name + ': Ngocok (skor terendah)'
+    })];
+  }
+
+  return [];
+}
+
+/** Membuat satu kartu pemain lengkap. `status` = { pengocok, handal }. */
+function buildPlayerCard(index, status) {
   const name = playerName(index);
-  const rank = playerRank(index);
   const score = state.scores[index];
+  const target = targetOf(state); // target aktif (dinamis)
   const scoreStr = String(score);
   const locked = !state.gameActive;
   const isWinner = !!(state.winner && state.winner.player === index);
@@ -624,14 +1086,13 @@ function buildPlayerCard(index) {
   const classes = ['card'];
   if (isWinner) classes.push('is-winner');
 
-  // Nama pemain = info paling penting setelah skor. Peringkat tampil compact;
-  // bila sudah menang, badge eksplisit "PEMENANG" menggantikan peringkat
-  // (bukan hanya mengandalkan warna hijau pada kartu).
+  // Nama pemain = info paling penting setelah skor. Badge status (Pengocok /
+  // Pengocok Handal / PEMENANG) tampil compact di sebelah nama, menggantikan
+  // badge peringkat #1..#4 yang lama.
+  const badges = buildCardBadges(status, isWinner, name);
   const header = h('div', { class: 'card-header' }, [
     h('span', { class: 'card-name', text: name, title: name }),
-    isWinner
-      ? h('span', { class: 'badge badge-winner', text: 'PEMENANG', title: 'Pemenang permainan' })
-      : h('span', { class: 'card-rank', text: '#' + rank, 'aria-label': 'Peringkat ' + rank })
+    badges.length ? h('span', { class: 'card-badges' }, badges) : null
   ]);
 
   const scoreClasses = ['card-score'];
@@ -641,23 +1102,23 @@ function buildPlayerCard(index) {
   const scoreEl = h('p', {
     class: scoreClasses.join(' '),
     text: scoreStr,
-    'aria-label': 'Skor ' + name + ': ' + scoreStr + ' dari target ' + TARGET_SCORE
+    'aria-label': 'Skor ' + name + ': ' + scoreStr + ' dari target ' + target
   });
 
   const progressLabel = h('p', {
     class: 'card-progress-label',
-    text: score + ' / ' + TARGET_SCORE
+    text: score + ' / ' + target
   });
 
   // Progress bar sebagai indikator tambahan (bukan satu-satunya penanda status).
-  const pct = Math.max(0, Math.min(100, (score / TARGET_SCORE) * 100));
+  const pct = Math.max(0, Math.min(100, (score / target) * 100));
   const fill = h('div', { class: 'progress-fill' });
   fill.style.width = pct.toFixed(1) + '%';
   const track = h('div', {
     class: 'progress-track',
     role: 'progressbar',
     'aria-valuemin': '0',
-    'aria-valuemax': String(TARGET_SCORE),
+    'aria-valuemax': String(target),
     'aria-valuenow': String(Math.max(0, score)),
     'aria-label': 'Kemajuan ' + name
   }, [fill]);
@@ -674,33 +1135,37 @@ function buildPlayerCard(index) {
   }, quickButtons);
 
   const inputId = 'score-input-' + index;
+  const pending = pendingScores[index];
   const input = h('input', {
     id: inputId,
     class: 'score-input',
     type: 'text',
     inputmode: 'numeric',
     pattern: '[+-]?[0-9]+',
+    value: pending === '' ? null : pending,
     placeholder: 'mis. +250',
     autocomplete: 'off',
     autocapitalize: 'off',
     spellcheck: 'false',
-    'aria-label': 'Input skor untuk ' + name,
+    'aria-label': 'Input skor sementara untuk ' + name,
     disabled: locked ? 'disabled' : null
   });
-  // Normalisasi saat mengetik/menempel: keyboard ponsel & autokoreksi kerap
-  // mengirim minus Unicode/U+2212 atau angka fullwidth. Nilainya langsung
-  // diperbaiki di kolom input agar pengguna MELIHAT "-25" yang benar.
+  // Input ini adalah skor SEMENTARA: nilainya belum masuk permainan sampai
+  // tombol Tambah ditekan. Normalisasi saat mengetik/menempel: keyboard ponsel &
+  // autokoreksi kerap mengirim minus Unicode/U+2212 atau angka fullwidth. Nilainya
+  // langsung diperbaiki di kolom input agar pengguna MELIHAT "-25" yang benar.
   input.addEventListener('input', function () {
     const normalized = normalizeNumberText(input.value);
     if (normalized !== input.value) {
       input.value = normalized;
       moveCaretToEnd(input);
     }
+    pendingScores[index] = input.value;
   });
   input.addEventListener('keydown', function (event) {
     if (event.key === 'Enter') {
       event.preventDefault();
-      submitScoreInput(index);
+      commitRound();
     }
   });
 
@@ -720,31 +1185,18 @@ function buildPlayerCard(index) {
 
   const inputWrap = h('div', { class: 'input-wrap' }, [input, signBtn]);
 
-  const addBtn = h('button', {
-    class: 'btn btn-primary btn-add',
-    type: 'button',
-    text: 'Tambah',
-    'aria-label': 'Tambah skor untuk ' + name,
-    disabled: locked ? 'disabled' : null
-  });
-  addBtn.addEventListener('click', function () {
-    submitScoreInput(index);
-  });
-
-  const inputRow = h('div', { class: 'input-row' }, [inputWrap, addBtn]);
-
   return h('article', {
     class: classes.join(' '),
     dataset: { player: String(index) },
     'aria-label': 'Pemain ' + name
-  }, [header, scoreEl, progressLabel, track, quick, inputRow]);
+  }, [header, scoreEl, progressLabel, track, quick, inputWrap]);
 }
 
 /**
  * Tombol skor cepat.
  * Visual: pengurang (-35/-40) = sekunder/netral, penambah (+250/+300) = primer
- * dengan aksen pink. Logika: tetap memanggil addScore() yang sama dengan input
- * manual, jadi tidak ada jalur scoring terpisah.
+ * dengan aksen pink. Logika: HANYA mengisi input sementara pemain — skor belum
+ * masuk permainan sampai tombol Tambah ditekan (tidak ada jalur scoring terpisah).
  */
 function buildQuickButton(index, amount) {
   const isPlus = amount > 0;
@@ -756,13 +1208,14 @@ function buildQuickButton(index, amount) {
     type: 'button',
     text: (isPlus ? '+' : '') + amount,
     'data-amount': String(amount),
-    'aria-label': (isPlus ? 'Tambah ' : 'Kurangi ') + Math.abs(amount) + ' untuk ' + playerName(index),
+    'aria-label': 'Isi skor ' + amount + ' untuk ' + playerName(index),
     disabled: !state.gameActive ? 'disabled' : null
   });
 
   btn.addEventListener('click', function () {
-    // Fokus tidak diambil agar keyboard mobile tidak muncul saat tombol cepat dipakai.
-    addScore(index, amount, false);
+    // Cukup mengisi input sementara. Fokus tidak diambil agar keyboard mobile
+    // tidak muncul saat tombol cepat dipakai.
+    setPendingScore(index, String(amount));
   });
 
   return btn;
@@ -771,7 +1224,23 @@ function buildQuickButton(index, amount) {
 /** Merender seluruh kartu pemain (grid 2x2 di mobile). */
 function renderPlayers() {
   const frag = document.createDocumentFragment();
-  for (let i = 0; i < PLAYER_COUNT; i++) frag.appendChild(buildPlayerCard(i));
+
+  // Status badge dihitung SEKALI per render (bukan per kartu):
+  //   - lowest : pemain dengan skor terendah SAAT INI ("Pengocok").
+  //   - stats  : "Pengocok Handal" = SATU pemain yang paling lama berada di
+  //              total skor terendah berturut-turut >= 4 ronde (lihat
+  //              computePlayerStats).
+  const lowest = currentLowestPlayers();
+  const stats = computePlayerStats(state.history);
+
+  for (let i = 0; i < PLAYER_COUNT; i++) {
+    frag.appendChild(buildPlayerCard(i, {
+      pengocok: lowest.indexOf(i) !== -1,
+      handal: stats.leaders.indexOf(i) !== -1,
+      streak: stats.streak
+    }));
+  }
+
   els.players.textContent = '';
   els.players.appendChild(frag);
 }
@@ -811,7 +1280,7 @@ function buildHistoryItem(event) {
       const byName = playerName(r.by);
       li.appendChild(h('p', {
         class: 'history-reset',
-        text: rName + ' disalip ' + byName + ' \u00b7 Skor ' + r.from + ' \u2192 0'
+        text: rName + ' overtaken by ' + byName + ' \u00b7 Skor ' + r.from + ' \u2192 0'
       }));
     }
   }
@@ -840,6 +1309,257 @@ function renderFullHistory() {
 }
 
 /* ============================================================================
+ * RENDER — STATISTIK
+ * ==========================================================================*/
+
+/** Urutan pemain untuk daftar statistik: terbanyak dulu, seri -> index menaik. */
+function orderPlayersByCount(counts) {
+  const order = [];
+  for (let i = 0; i < PLAYER_COUNT; i++) order.push({ index: i, count: counts[i] });
+  order.sort(function (a, b) {
+    return (b.count - a.count) || (a.index - b.index);
+  });
+  return order;
+}
+
+/** Satu metrik kecil di baris statistik (nilai + label ringkas). */
+function buildStatMetric(value, label) {
+  return h('span', { class: 'stat' }, [
+    h('span', { class: 'stat-value', text: String(value) }),
+    h('span', { class: 'stat-label', text: label })
+  ]);
+}
+
+/**
+ * Merender blok statistik pemain ke elemen yang diberikan. Dipakai BERSAMA oleh
+ * layar Statistik dan layar Hasil Permainan agar makna & tampilan selalu sama.
+ *
+ * refs = { summary?, leaders?, list?, empty?, withCandidate? } — semua opsional;
+ * hanya elemen yang ada yang diperbarui.
+ *   - leaders      : callout "Pengocok Handal" (nama + panjang rentetan ronde).
+ *   - withCandidate: bila true (layar Statistik), callout JUGA menampilkan
+ *                    "Kandidat Pengocok Handal" = pemimpin sementara dengan
+ *                    rentetan terpanjang walau belum mencapai ambang >= 4 ronde,
+ *                    sehingga info "siapa calon Pengocok Handal" selalu ada.
+ *   - list         : daftar tiap pemain = Ngocok / Shutout.
+ */
+function renderStatsBlock(refs, stats) {
+  const hasData = stats.rounds > 0;
+
+  if (refs.summary) {
+    refs.summary.textContent = hasData ? 'Dihitung dari ' + stats.rounds + ' ronde.' : '';
+  }
+
+  // Callout "Pengocok Handal" (TEPAT satu pemain: paling lama berada di total
+  // skor terendah berturut-turut >= 4 ronde).
+  //   - Bila ada penyandang: tampilkan badge pink + nama + panjang rentetan.
+  //   - Bila BELUM ada tapi layar meminta kandidat (layar Statistik), tampilkan
+  //     "pemimpin sementara" (rentetan terpanjang saat ini, belum memenuhi
+  //     syarat) dengan gaya netral, agar informasi siapa calon Pengocok Handal
+  //     tetap terlihat.
+  if (refs.leaders) {
+    refs.leaders.textContent = '';
+    const hasLeader = hasData && stats.leaders.length > 0;
+    const hasCandidate = !hasLeader && !!refs.withCandidate && hasData &&
+      stats.candidate >= 0 && stats.candidateStreak > 0;
+
+    refs.leaders.hidden = !(hasLeader || hasCandidate);
+    refs.leaders.classList.toggle('is-candidate', hasCandidate);
+
+    if (hasLeader) {
+      const names = [];
+      for (let i = 0; i < stats.leaders.length; i++) names.push(playerName(stats.leaders[i]));
+      refs.leaders.appendChild(h('span', {
+        class: 'badge badge-stat',
+        text: '\uD83C\uDFC6 Pengocok Handal'
+      }));
+      refs.leaders.appendChild(h('span', {
+        class: 'stats-leader-names',
+        text: names.join(' & ')
+      }));
+      // Panjang rentetan ditulis sebagai angka besar supaya langsung menonjol.
+      refs.leaders.appendChild(h('span', {
+        class: 'stats-leader-streak',
+        text: stats.streak + '\u00d7',
+        title: 'Ngocok berturut-turut ' + stats.streak + ' ronde',
+        'aria-label': 'Ngocok berturut-turut ' + stats.streak + ' ronde'
+      }));
+    } else if (hasCandidate) {
+      refs.leaders.appendChild(h('span', {
+        class: 'badge badge-candidate',
+        text: '\uD83C\uDFAF Kandidat Pengocok Handal'
+      }));
+      refs.leaders.appendChild(h('span', {
+        class: 'stats-leader-names',
+        text: playerName(stats.candidate) + ' \u00b7 ' + stats.candidateStreak +
+          '\u00d7 \u2014 belum memenuhi syarat (min. ' + HANDAL_STREAK_MIN + ' ronde)'
+      }));
+    }
+  }
+
+  // Daftar seluruh pemain: Ngocok / Shutout tampil per baris.
+  if (refs.list) {
+    refs.list.textContent = '';
+    if (hasData) {
+      const order = orderPlayersByCount(stats.counts);
+      for (let i = 0; i < order.length; i++) {
+        const item = order[i];
+        const isLeader = stats.leaders.indexOf(item.index) !== -1;
+
+        const head = h('div', { class: 'stats-head' }, [
+          h('span', { class: 'stats-pos', text: '#' + (i + 1) }),
+          h('span', { class: 'stats-name', text: playerName(item.index), title: playerName(item.index) })
+        ]);
+        if (isLeader) {
+          head.appendChild(h('span', { class: 'badge badge-stat', text: '\uD83C\uDFC6 Pengocok Handal' }));
+        }
+
+        const row = h('li', { class: 'stats-item' + (isLeader ? ' is-leader' : '') }, [
+          head,
+          h('div', { class: 'stats-metrics' }, [
+            buildStatMetric(item.count, 'Ngocok'),
+            buildStatMetric(stats.perfect[item.index], 'Shutout')
+          ])
+        ]);
+
+        refs.list.appendChild(row);
+      }
+    }
+  }
+
+  if (refs.empty) refs.empty.hidden = hasData;
+}
+
+/**
+ * Merender isi modal Statistik dari riwayat skor TERKINI.
+ * Selalu dihitung ulang dari `state.history` agar mengikuti data terbaru
+ * (mis. setelah pencatatan ronde baru atau permainan baru dibuat).
+ */
+function renderStats() {
+  if (!els.statsList) return;
+
+  renderStatsBlock({
+    summary: els.statsSummary,
+    leaders: els.statsLeaders,
+    list: els.statsList,
+    empty: els.statsEmpty,
+    // Layar Statistik: tampilkan pemimpin sementara walau belum ada yang >= 4 ronde.
+    withCandidate: true
+  }, computePlayerStats(state.history));
+}
+
+/* ============================================================================
+ * RENDER — VERSI & CHANGELOG
+ * ==========================================================================*/
+
+/**
+ * Versi rilisan aplikasi yang tampil di header (kanan atas).
+ * PENTING: naikkan nilai ini SETIAP kali ada perubahan, agar pengguna selalu
+ * melihat versi terbaru. Format: "vMAJOR.MINOR".
+ */
+const APP_VERSION = 'v1.4';
+
+/**
+ * Menampilkan versi rilisan di header (mis. "v1.1") DAN di layar Hasil Permainan
+ * (di bawah logo), agar pengguna selalu melihat versi yang sama di mana pun.
+ */
+function renderVersion() {
+  if (els.appVersion) els.appVersion.textContent = APP_VERSION;
+  if (els.winnerVersion) els.winnerVersion.textContent = APP_VERSION;
+}
+
+/**
+ * Data changelog — cukup edit array ini untuk menambah/mengubah entri.
+ * Konvensi: entri TERBARU diletakkan paling atas (urutan tampil = urutan array).
+ */
+const CHANGELOG_ENTRIES = [
+  {
+    date: '2026-10-07',
+    title: 'feat(ui): Result-screen logo & version, "Ngocok" term, consistent buttons'
+  },
+  {
+    date: '2026-10-07',
+    title: 'fix(stats): count single-recorder rounds (1 [Perbarui] = 1 round)'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(result): Winner card + Pengocok Handal card (statistics table removed)'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(ui): rename the Pengocok badge to Ngocok'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(ui): Remi card logo, [Perbarui] button, cleaner Settings screen'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(stats): Statistik screen always shows Pengocok Handal (provisional leader before 4 rounds)'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(stats): Pengocok Handal = longest run at the lowest total (ties count), >= 4 rounds'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(result): statistics in the shared PNG result card'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(result): full player statistics on the game-result screen'
+  },
+  {
+    date: '2026-10-07',
+    title: 'fix(stats): ignore single-player rounds for the handal badge'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(stats): require >3 lowest scores for the handal badge'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(cards): random shuffler badge on score tie'
+  },
+  {
+    date: '2026-10-07',
+    title: 'fix(rules): reset only the milestone owner (500-999)'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(cards): single per-player status badge'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(rounds): per-round scoring + stats'
+  },
+  {
+    date: '2026-10-07',
+    title: 'feat(config): customizable target score'
+  },
+  {
+    date: '2026-10-07',
+    title: 'style(ui): interface refresh'
+  }
+];
+
+/** Merender daftar changelog (konten statis, cukup dipanggil sekali saat init). */
+function renderChangelog() {
+  if (!els.changelogList) return;
+
+  els.changelogList.textContent = '';
+  for (let i = 0; i < CHANGELOG_ENTRIES.length; i++) {
+    const entry = CHANGELOG_ENTRIES[i];
+    els.changelogList.appendChild(h('li', { class: 'changelog-item' }, [
+      h('p', { class: 'changelog-meta' }, [
+        h('span', { class: 'changelog-date', text: entry.date }),
+        h('span', { class: 'changelog-title', text: entry.title })
+      ])
+    ]));
+  }
+}
+
+/* ============================================================================
  * RENDER — UTAMA
  * ==========================================================================*/
 
@@ -851,12 +1571,16 @@ function render() {
 
   const gameOver = !state.gameActive;
   if (els.btnWinner) els.btnWinner.hidden = !gameOver;
+  if (els.btnAddRound) els.btnAddRound.disabled = gameOver;
 
   // Bila modal riwayat sedang terbuka, ikut diperbarui.
   if (els.historyModal && !els.historyModal.hidden) renderFullHistory();
+
+  // Bila modal statistik sedang terbuka, ikut diperbarui (mengikuti data terbaru).
+  if (els.statsModal && !els.statsModal.hidden) renderStats();
 }
 
-/** Mengisi konten modal hasil (pemenang + ranking). */
+/** Mengisi konten modal hasil (pemenang + ranking + statistik lengkap). */
 function renderWinnerModalContent() {
   if (!state.winner) return;
 
@@ -881,13 +1605,126 @@ function renderWinnerModalContent() {
       })
     ]));
   }
+
+  // Kartu "Pengocok Handal" (kartu kedua layar hasil, tepat di bawah pemenang):
+  // SATU pemain dengan rentetan "Ngocok" terpanjang (total skor terendah)
+  // >= HANDAL_STREAK_MIN ronde. Kartu SELALU tampil; bila belum ada yang memenuhi
+  // syarat, ia memakai gaya netral (.is-empty) agar susunan layar tetap konsisten.
+  // Sumber data SAMA dengan badge kartu & layar Statistik (computePlayerStats),
+  // sehingga angkanya tidak pernah berbeda. Tabel statistik penuh per pemain
+  // sengaja TIDAK lagi ditampilkan di sini (pindah ke layar Statistik).
+  if (els.winnerHandalBox) {
+    const stats = computePlayerStats(state.history);
+    const hasLeader = stats.rounds > 0 && stats.leaders.length > 0;
+    els.winnerHandalBox.classList.toggle('is-empty', !hasLeader);
+    if (hasLeader) {
+      els.winnerHandalName.textContent = playerName(stats.leaders[0]);
+      els.winnerHandalMeta.textContent =
+        stats.streak + '\u00d7 Ngocok berturut-turut';
+    } else {
+      els.winnerHandalName.textContent = 'Belum ada';
+      els.winnerHandalMeta.textContent =
+        'Belum memenuhi syarat (min. ' + HANDAL_STREAK_MIN + ' ronde)';
+    }
+  }
 }
 
 /* ============================================================================
- * AKSI — INPUT SKOR
+ * AKSI — SKOR SEMENTARA & CATAT RONDE
  * ==========================================================================*/
 
-/** Dipanggil dari tombol "Tambah" atau tombol Enter pada input. */
+/** Mengisi skor sementara pemain (dipakai tombol skor cepat) + sinkronkan input. */
+function setPendingScore(playerIndex, text) {
+  if (playerIndex < 0 || playerIndex >= PLAYER_COUNT) return;
+
+  const next = typeof text === 'string' ? text : '';
+  pendingScores[playerIndex] = next;
+
+  const input = document.getElementById('score-input-' + playerIndex);
+  if (input && !input.disabled) {
+    input.value = next;
+    moveCaretToEnd(input);
+  }
+}
+
+/** Mengosongkan seluruh skor sementara (setelah ronde dicatat / permainan baru). */
+function clearPendingScores() {
+  for (let i = 0; i < PLAYER_COUNT; i++) pendingScores[i] = '';
+}
+
+/**
+ * Dipanggil dari tombol "Tambah" (atau Enter pada input): mencatat SEMUA skor
+ * yang terisi sebagai SATU ronde. Input kosong TIDAK dianggap 0 (pemain itu
+ * tidak ikut dalam ronde). Setelah berhasil, skor sementara dikosongkan agar
+ * siap untuk ronde berikutnya.
+ */
+function commitRound() {
+  if (!state.gameActive) {
+    showToast('Permainan sudah selesai.', 'error');
+    return;
+  }
+
+  const entries = [];
+  let firstInvalid = -1;
+
+  for (let i = 0; i < PLAYER_COUNT; i++) {
+    const raw = pendingScores[i];
+    if (typeof raw !== 'string' || raw.trim() === '') continue; // kosong => tidak ikut
+
+    const amount = parseScoreInput(raw);
+    if (amount === null) { firstInvalid = i; break; }
+    entries.push({ player: i, amount: amount });
+  }
+
+  if (firstInvalid !== -1) {
+    showToast('Skor ' + playerName(firstInvalid) + ' tidak valid. Contoh: 50 atau -50.', 'error');
+    focusPlayerInput(firstInvalid);
+    return;
+  }
+
+  if (entries.length === 0) {
+    showToast('Isi skor minimal satu pemain dulu.', 'error');
+    return;
+  }
+
+  const result = applyRound(state, entries, Date.now());
+  if (!result.ok) {
+    if (result.reason === 'game-over') showToast('Permainan sudah selesai.', 'error');
+    return;
+  }
+
+  clearPendingScores();
+  saveState();
+  render();
+  applyRoundFeedback(result);
+
+  if (result.winner) openWinnerModal();
+}
+
+/*
+ * LEGACY — dipertahankan agar jalur/perkakas lama (mis. tests/dom.test.js) yang
+ * masih memanggil addScore()/submitScoreInput() tetap berfungsi. UI sekarang
+ * mencatat skor lewat commitRound() (satu klik Tambah = satu ronde).
+ */
+
+/** Menambahkan skor SATU pemain (jalur lama, tanpa penggabungan ronde). */
+function addScore(playerIndex, amount, focusInput) {
+  const result = applyScoreChange(state, playerIndex, amount);
+
+  if (!result.ok) {
+    if (result.reason === 'bad-amount') showToast('Nilai skor tidak valid.', 'error');
+    return;
+  }
+
+  saveState();
+  render();
+  if (focusInput) focusPlayerInput(playerIndex);
+  applyRoundFeedback(result);
+
+  if (result.winner) openWinnerModal();
+}
+
+/** Mencatat skor dari input SATU pemain (jalur lama). */
 function submitScoreInput(playerIndex) {
   if (!state.gameActive) return;
 
@@ -924,6 +1761,7 @@ function toggleScoreSign(playerIndex) {
   else next = '-' + current;                                   // positif -> negatif
 
   input.value = next;
+  pendingScores[playerIndex] = next;
   moveCaretToEnd(input);
   try { input.focus(); } catch (err) {}
 }
@@ -938,41 +1776,22 @@ function moveCaretToEnd(input) {
   }
 }
 
-/**
- * Menambahkan skor, lalu menyimpan, merender, dan memberi umpan balik.
- * `focusInput` true hanya untuk input manual (agar keyboard mobile tidak muncul
- * saat pengguna menekan tombol cepat).
- */
-function addScore(playerIndex, amount, focusInput) {
-  const result = applyScoreChange(state, playerIndex, amount);
-
-  if (!result.ok) {
-    if (result.reason === 'bad-amount') showToast('Nilai skor tidak valid.', 'error');
-    return;
-  }
-
-  saveState();
-  render();
-  if (focusInput) focusPlayerInput(playerIndex);
-  applyCardFeedback(playerIndex, result);
-
-  if (result.winner) openWinnerModal();
-}
-
 /* ============================================================================
  * AKSI — UMPAN BALIK VISUAL
  * ==========================================================================*/
 
 /**
- * Umpan balik setelah skor berubah.
- * - Kartu yang diubah berkedip singkat.
+ * Umpan balik setelah satu ronde dicatat.
+ * - Kartu tiap pemain yang IKUT dalam ronde berkedip singkat.
  * - Kartu pemain yang direset berkedip lebih kuat (kuning).
  * - Banner besar ditampilkan agar user langsung tahu MENGAPA skor jadi 0,
  *   tanpa harus membuka riwayat.
  */
-function applyCardFeedback(playerIndex, result) {
-  const card = els.players.querySelector('.card[data-player="' + playerIndex + '"]');
-  flashClass(card, 'just-updated', 520);
+function applyRoundFeedback(result) {
+  for (let i = 0; i < result.events.length; i++) {
+    const card = els.players.querySelector('.card[data-player="' + result.events[i].player + '"]');
+    flashClass(card, 'just-updated', 520);
+  }
 
   for (let i = 0; i < result.resets.length; i++) {
     const r = result.resets[i];
@@ -999,18 +1818,18 @@ function showResetAlert(resets) {
       class: 'alert-title',
       text: '\u26a0 ' + rName.toUpperCase() + ' RESET'
     }));
-    els.alertBanner.appendChild(h('p', { text: byName + ' menyalip ' + rName + '.' }));
+    els.alertBanner.appendChild(h('p', { text: byName + ' overtakes ' + rName + '.' }));
     els.alertBanner.appendChild(h('p', { text: rName + ': ' + r.from + ' \u2192 0' }));
   } else {
     els.alertBanner.appendChild(h('span', {
       class: 'alert-title',
-      text: '\u26a0 RESET \u2014 pemain disalip'
+      text: '\u26a0 RESET \u2014 pemain overtaken'
     }));
     for (let i = 0; i < resets.length; i++) {
       const r = resets[i];
       const rName = playerName(r.player);
       els.alertBanner.appendChild(h('p', {
-        text: rName + ' disalip ' + playerName(r.by) + '. ' + rName + ': ' + r.from + ' \u2192 0'
+        text: rName + ' overtaken by ' + playerName(r.by) + '. ' + rName + ': ' + r.from + ' \u2192 0'
       }));
     }
   }
@@ -1033,14 +1852,65 @@ function hideResetAlert() {
 }
 
 /* ============================================================================
- * AKSI — PENGATURAN NAMA
+ * AKSI — PENGATURAN (TARGET & NAMA)
  * ==========================================================================*/
 
-/** Membangun 4 field nama di modal pengaturan. */
+/**
+ * Field "Target Poin" + tombol Simpan.
+ * Target BERLAKU setelah tombol Simpan ditekan (bukan auto-save seperti nama),
+ * sehingga menutup modal tanpa menyimpan TIDAK mengubah target.
+ */
+function buildTargetField() {
+  const targetInput = h('input', {
+    id: 'target-input',
+    class: 'field-input',
+    type: 'text',
+    inputmode: 'numeric',
+    pattern: '[0-9]*',
+    maxlength: '7',
+    autocomplete: 'off',
+    'aria-label': 'Target poin',
+    value: String(targetOf(state))
+  });
+
+  // Normalisasi saat mengetik/menempel (angka fullwidth & spasi hasil salin-tempel).
+  targetInput.addEventListener('input', function () {
+    const normalized = normalizeNumberText(targetInput.value);
+    if (normalized !== targetInput.value) {
+      targetInput.value = normalized;
+      moveCaretToEnd(targetInput);
+    }
+  });
+  targetInput.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applyTargetInput(targetInput);
+    }
+  });
+
+  const saveBtn = h('button', {
+    class: 'btn btn-primary',
+    type: 'button',
+    text: 'Simpan'
+  });
+  saveBtn.addEventListener('click', function () {
+    applyTargetInput(targetInput);
+  });
+
+  return h('div', { class: 'field field-target' }, [
+    h('label', { class: 'field-label', for: 'target-input', text: 'Target Poin' }),
+    h('div', { class: 'field-row' }, [targetInput, saveBtn]),
+    h('p', { class: 'field-hint', text: 'Bilangan bulat positif. Bawaan 1000.' })
+  ]);
+}
+
+/** Membangun field 4 nama pemain + target poin di layar Pengaturan. */
 function buildSettingsFields() {
   const form = els.settingsForm;
   form.textContent = '';
 
+  // Kelompok 1 — Nama Pemain (tersimpan otomatis setiap ketikan).
+  form.appendChild(h('p', { class: 'field-group-label', text: 'Nama Pemain' }));
   for (let i = 0; i < PLAYER_COUNT; i++) {
     const id = 'name-input-' + i;
     const input = h('input', {
@@ -1062,6 +1932,37 @@ function buildSettingsFields() {
       input
     ]));
   }
+
+  // Kelompok 2 — Target Poin (baru berlaku setelah menekan Simpan).
+  form.appendChild(buildTargetField());
+}
+
+/**
+ * Menerapkan target poin dari field pengaturan.
+ * Bila nilai tidak valid (kosong, 0, negatif, desimal, NaN) atau di luar batas,
+ * target TIDAK berubah dan pengguna diberi tahu lewat toast.
+ * PENTING: hanya `state.target` yang diubah — skor, riwayat, dan milestone tetap.
+ */
+function applyTargetInput(input) {
+  const value = parseTargetInput(input.value);
+  if (value === null) {
+    showToast('Target harus bilangan bulat positif (contoh: 1000).', 'error');
+    try { input.focus(); } catch (err) {}
+    if (input.select) input.select();
+    return;
+  }
+
+  state.target = value;
+
+  // Target baru bisa membuat skor yang SUDAH ada melewati target -> permainan
+  // selesai saat itu juga (kondisi menang memakai target aktif).
+  const hadWinner = !!state.winner;
+  const winner = checkWinner(state);
+
+  saveState();
+  render();
+  showToast('Target diubah menjadi ' + value + ' poin.');
+  if (!hadWinner && winner) openWinnerModal();
 }
 
 /**
@@ -1078,20 +1979,70 @@ function onNameInput(index, input) {
   renderRecentHistory();    // nama pada riwayat juga mengikuti
 }
 
-/** Membuka modal pengaturan dengan nilai nama terkini. */
+/** Membuka layar Pengaturan dengan nilai terkini. */
 function openSettings() {
-  buildSettingsFields();
-  openModal(els.settingsModal, els.settingsForm.querySelector('input'));
+  setActiveTab('settings');
 }
 
 /* ============================================================================
  * AKSI — RIWAYAT & PERMAINAN BARU
  * ==========================================================================*/
 
-/** Membuka modal riwayat lengkap. */
+/** Membuka layar Riwayat lengkap. */
 function openHistory() {
-  renderFullHistory();
-  openModal(els.historyModal, document.getElementById('btnCloseHistory'));
+  setActiveTab('history');
+}
+
+/** Membuka layar Statistik (selalu dihitung dari riwayat terkini). */
+function openStats() {
+  setActiveTab('stats');
+}
+
+/* ============================================================================
+ * NAVIGASI — BOTTOM NAVIGATION (TAB)
+ * ----------------------------------------------------------------------------
+ * Riwayat / Statistik / Pengaturan kini berupa LAYAR di dalam <main>, bukan
+ * lagi bottom-sheet modal. Bottom navigation hanya mengganti layar yang tampil;
+ * tidak ada logika permainan/skor yang disentuh.
+ * ==========================================================================*/
+const SCREEN_IDS = {
+  main: 'screenMain',
+  history: 'historyModal',
+  stats: 'statsModal',
+  settings: 'settingsModal'
+};
+
+/** Menampilkan satu layar dan menandai tab yang aktif. */
+function setActiveTab(name) {
+  if (!SCREEN_IDS[name]) name = 'main';
+
+  const keys = Object.keys(SCREEN_IDS);
+  for (let i = 0; i < keys.length; i++) {
+    const el = document.getElementById(SCREEN_IDS[keys[i]]);
+    if (el) el.hidden = keys[i] !== name;
+  }
+
+  const tabs = document.querySelectorAll('[data-tab]');
+  for (let i = 0; i < tabs.length; i++) {
+    const on = tabs[i].getAttribute('data-tab') === name;
+    tabs[i].classList.toggle('is-active', on);
+    if (on) tabs[i].setAttribute('aria-current', 'page');
+    else tabs[i].removeAttribute('aria-current');
+  }
+
+  // Segarkan konten layar yang baru dibuka dari state terkini.
+  if (name === 'history') renderFullHistory();
+  else if (name === 'stats') renderStats();
+  else if (name === 'settings') buildSettingsFields();
+  else render();
+
+  // Mulai dari atas layar saat berpindah tab.
+  try { window.scrollTo(0, 0); } catch (err) { /* bukan hal kritis */ }
+}
+
+/** Kembali ke layar utama (tab "Main"). */
+function openMain() {
+  setActiveTab('main');
 }
 
 /**
@@ -1116,18 +2067,21 @@ function clearHistoryAction() {
 
 /**
  * Memulai permainan baru.
- * MENGAPA: hanya DATA PERMAINAN yang direset. Nama pemain dipertahankan
- * sesuai permintaan (lihat spec bagian 4 & 15).
+ * MENGAPA: hanya DATA PERMAINAN yang direset. Nama pemain DAN target poin
+ * dipertahankan (target = pengaturan, bukan bagian dari permainan).
  */
 function startNewGame() {
   confirmAction(
     'Mulai permainan baru?',
-    'Skor, riwayat, dan urutan milestone permainan saat ini akan dihapus. Nama pemain tetap dipertahankan.',
+    'Skor, riwayat, dan urutan milestone permainan saat ini akan dihapus. Nama pemain dan target poin tetap dipertahankan.',
     'Ya, mulai baru',
     function () {
       const names = state.names.slice(); // pertahankan nama
+      const target = targetOf(state);    // pertahankan target poin (bukan bagian "permainan")
       state = createDefaultState();
       state.names = names;
+      state.target = target;
+      clearPendingScores(); // buang skor sementara dari permainan sebelumnya
       saveState();
       hideResetAlert();
       closeModal(els.winnerModal);
@@ -1215,7 +2169,9 @@ function openWinnerModal() {
   openModal(els.winnerModal, document.getElementById('btnSaveResult'));
 }
 
-/** Klik pada backdrop (elemen dengan `data-close`). */
+/** Klik pada backdrop modal (elemen dengan `data-close`).
+ *  Hanya dialog konfirmasi yang masih memakai backdrop (Riwayat/Statistik/
+ *  Pengaturan kini layar, bukan modal). */
 function onDocumentClick(event) {
   const target = event.target;
   if (!target || typeof target.closest !== 'function') return;
@@ -1223,10 +2179,7 @@ function onDocumentClick(event) {
   const closer = target.closest('[data-close]');
   if (!closer) return;
 
-  const which = closer.getAttribute('data-close');
-  if (which === 'confirmCancel') closeConfirm();
-  else if (which === 'settingsModal') closeModal(els.settingsModal);
-  else if (which === 'historyModal') closeModal(els.historyModal);
+  if (closer.getAttribute('data-close') === 'confirmCancel') closeConfirm();
 }
 
 /** Tombol Escape menutup modal paling atas. */
@@ -1295,6 +2248,12 @@ const IMG_BOX_H = 264;
 const IMG_ROW_H = 92;
 const IMG_ROW_GAP = 14;
 
+/* Bagian statistik pada gambar hasil (muncul hanya bila ada ronde tercatat). */
+const IMG_STAT_ROW_H = 78;      // tinggi tiap baris statistik pemain (termasuk jarak)
+const IMG_STAT_ROW_GAP = 12;    // jarak antar baris statistik
+const IMG_STAT_LEAD_H = 72;     // tinggi kotak callout "Pengocok Handal"
+const IMG_STAT_METRIC_W = 156;  // lebar tiap kolom metrik (NGOCOK/SHUTOUT)
+
 function pad2(n) {
   return (n < 10 ? '0' : '') + n;
 }
@@ -1329,6 +2288,52 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, radius);
   ctx.arcTo(x, y, x + w, y, radius);
   ctx.closePath();
+}
+
+/**
+ * Menggambar logo "kartu Remi" (dua kartu bertumpuk + hati pink) — bentuk yang
+ * SAMA PERSIS dengan ikon di header (svg viewBox "0 0 24 24") dan dengan favicon/
+ * ikon PWA, supaya logo di layar dan di gambar PNG berbagi satu sumber desain.
+ * `x`/`y` = sudut kiri-atas, `size` = panjang sisi kotak logo (px); koordinat
+ * SVG 24x24 diskalakan ke dalam kotak tersebut.
+ */
+function drawBrandLogo(ctx, x, y, size) {
+  const s = size / 24;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  // Kartu belakang (pink).
+  ctx.fillStyle = IMG_COLORS.pink;
+  drawRoundedRect(ctx, 8.4, 2.8, 11, 15.2, 2.2);
+  ctx.fill();
+
+  // Kartu depan (putih + garis hitam).
+  ctx.fillStyle = IMG_COLORS.card;
+  ctx.strokeStyle = IMG_COLORS.ink;
+  ctx.lineWidth = 1.4;
+  drawRoundedRect(ctx, 4.6, 5.2, 11, 15.2, 2.2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Hati: path persis sama dengan <path class="logo-heart"> di header.
+  ctx.beginPath();
+  ctx.moveTo(10.1, 16.2);
+  ctx.bezierCurveTo(8.3, 14.9, 7.1, 13.8, 7.1, 12.2);
+  ctx.bezierCurveTo(7.1, 11.1, 8, 10.2, 9.1, 10.2);
+  ctx.bezierCurveTo(9.7, 10.2, 10.3, 10.5, 10.7, 11.1);
+  ctx.bezierCurveTo(11.1, 10.5, 11.7, 10.2, 12.3, 10.2);
+  ctx.bezierCurveTo(13.4, 10.2, 14.3, 11.1, 14.3, 12.2);
+  ctx.bezierCurveTo(14.3, 13.8, 13.1, 14.9, 11.3, 16.2);
+  ctx.lineTo(10.7, 16.6);
+  ctx.closePath();
+  ctx.fillStyle = IMG_COLORS.pink;
+  ctx.fill();
+
+  ctx.restore();
 }
 
 /** Mencari ukuran font terbesar (turun 2px) agar teks muat dalam maxWidth. */
@@ -1398,7 +2403,10 @@ function wrapText(ctx, text, maxWidth, maxLines, weight, size) {
 
 /**
  * Menggambar KARTU HASIL khusus untuk dibagikan (bukan screenshot UI).
- * Komposisi: wordmark Remiku, tanggal, kotak pemenang, ranking, dan footer.
+ * Komposisi: wordmark Remiku, tanggal, kotak pemenang, ranking, statistik
+ * lengkap (pengocok handal + hitungan tiap pemain), lalu footer. Statistik
+ * memakai `computePlayerStats(state.history)` yang SAMA dengan modal Hasil &
+ * modal Statistik, sehingga angka di gambar tidak pernah berbeda dengan UI.
  * Tinggi kanvas dihitung dari tinggi konten sehingga tidak ada bagian
  * yang terpotong, termasuk untuk nama panjang, skor negatif, maupun 1000+.
  */
@@ -1410,6 +2418,12 @@ function drawResultCard(canvas) {
   const winnerScore = state.scores[winnerIndex];
   const now = new Date();
 
+  // Statistik lengkap: dihitung dari riwayat yang SAMA seperti modal Hasil &
+  // modal Statistik, sehingga gambar hasil tidak pernah berbeda dengan UI.
+  const stats = computePlayerStats(state.history);
+  const hasStats = stats.rounds > 0;
+  const hasLeader = hasStats && stats.leaders.length > 0;
+
   const W = IMG_WIDTH;
   const cardX = IMG_MARGIN;
   const cardY = IMG_MARGIN;
@@ -1419,15 +2433,32 @@ function drawResultCard(canvas) {
   const centerX = cardX + cardW / 2;
 
   // ---- Tata letak vertikal (semua dihitung, tidak ada koordinat rapuh) ----
-  const brandY = cardY + IMG_PAD + 74;
-  const kickerY = brandY + 50;
+  // Urutan atas meniru header & layar Hasil: logo kartu + wordmark "Remiku",
+  // lalu baris "versi · kredit" di bawahnya, baru kicker "HASIL PERMAINAN".
+  const brandY = cardY + IMG_PAD + 74;   // baseline wordmark "Remiku"
+  const logoSize = 66;                   // tinggi logo kartu (px)
+  const logoTop = brandY - 50;           // sejajar visual dengan wordmark
+  const metaY = brandY + 40;             // baris "versi · kredit"
+  const kickerY = metaY + 42;
   const dateY = kickerY + 44;
   const winnerBoxY = dateY + 40;
   const rankTitleY = winnerBoxY + IMG_BOX_H + 84;
   const rowsY = rankTitleY + 26;
   const rowsH = ranking.length * IMG_ROW_H +
     (ranking.length > 1 ? (ranking.length - 1) * IMG_ROW_GAP : 0);
-  const dividerY = rowsY + rowsH + 58;
+
+  // ---- Bagian statistik lengkap (muncul HANYA bila ada ronde tercatat) ----
+  const statOrder = hasStats ? orderPlayersByCount(stats.counts) : [];
+  const statsTitleY = rowsY + rowsH + 78;
+  const statsTopY = statsTitleY + 30;
+  const statsLeadersH = hasLeader ? IMG_STAT_LEAD_H + 18 : 0;
+  const statsRowsH = hasStats
+    ? (PLAYER_COUNT * IMG_STAT_ROW_H + (PLAYER_COUNT - 1) * IMG_STAT_ROW_GAP)
+    : 0;
+  const statsH = statsLeadersH + statsRowsH;
+  const statsEndY = statsTopY + statsH;
+
+  const dividerY = hasStats ? (statsEndY + 58) : (rowsY + rowsH + 58);
   const footerY = dividerY + 54;
   const cardH = (footerY + IMG_PAD - IMG_MARGIN) - cardY;
   const H = cardH + IMG_MARGIN * 2;
@@ -1471,17 +2502,29 @@ function drawResultCard(canvas) {
 
   ctx.textBaseline = 'alphabetic';
 
-  // ---- Wordmark: "Remi" hitam + "ku" pink (sama dengan header & layar hasil) ----
+  // ---- Logo kartu + wordmark "Remiku" (sama dengan header & layar Hasil) ----
   ctx.font = '900 72px ' + FONT_STACK;
   ctx.textAlign = 'left';
   const brandW1 = ctx.measureText(BRAND_A).width;
   const brandW2 = ctx.measureText(BRAND_B).width;
-  const brandX = centerX - (brandW1 + brandW2) / 2;
+  const brandTextW = brandW1 + brandW2;
+  const brandGap = 22;
+  const brandGroupW = logoSize + brandGap + brandTextW;
+  const brandLeft = centerX - brandGroupW / 2;
 
+  drawBrandLogo(ctx, brandLeft, logoTop, logoSize);
+
+  const brandX = brandLeft + logoSize + brandGap;
   ctx.fillStyle = IMG_COLORS.ink;
   ctx.fillText(BRAND_A, brandX, brandY);
   ctx.fillStyle = IMG_COLORS.pink;
   ctx.fillText(BRAND_B, brandX + brandW1, brandY);
+
+  // ---- Baris versi & kredit, tepat di bawah logo (sama seperti header) -----
+  ctx.textAlign = 'center';
+  ctx.fillStyle = IMG_COLORS.muted;
+  ctx.font = '800 21px ' + FONT_STACK;
+  ctx.fillText(APP_VERSION + ' \u00b7 zkvoid', centerX, metaY);
 
   // ---- Subjudul + tanggal aktual (DD BULAN YYYY, bahasa Indonesia) ----
   ctx.textAlign = 'center';
@@ -1594,6 +2637,119 @@ function drawResultCard(canvas) {
   }
 
   ctx.textBaseline = 'alphabetic';
+
+  // ---- Statistik lengkap: pengocok handal + hitungan tiap pemain ----
+  if (hasStats) {
+    // Judul + garis aksen pink (sama gaya dengan judul "RANKING").
+    ctx.textAlign = 'left';
+    ctx.fillStyle = IMG_COLORS.ink;
+    ctx.font = '900 26px ' + FONT_STACK;
+    ctx.fillText('STATISTIK LENGKAP', contentX, statsTitleY);
+
+    ctx.fillStyle = IMG_COLORS.pink;
+    drawRoundedRect(ctx, contentX, statsTitleY + 12, 110, 6, 3);
+    ctx.fill();
+
+    let sy = statsTopY;
+
+    // Callout "Pengocok Handal": pil gelap + nama & panjang rentetan ronde.
+    if (hasLeader) {
+      ctx.fillStyle = IMG_COLORS.pinkSoft;
+      ctx.strokeStyle = IMG_COLORS.ink;
+      ctx.lineWidth = 3;
+      drawRoundedRect(ctx, contentX, sy, contentW, IMG_STAT_LEAD_H, 18);
+      ctx.fill();
+      ctx.stroke();
+
+      const leadMidY = sy + IMG_STAT_LEAD_H / 2;
+
+      ctx.font = '900 20px ' + FONT_STACK;
+      const badgeText = '\uD83C\uDFC6 PENGOCOK HANDAL';
+      const badgeW = ctx.measureText(badgeText).width + 36;
+      const badgeH = 40;
+      const badgeX = contentX + 18;
+      ctx.fillStyle = IMG_COLORS.ink;
+      drawRoundedRect(ctx, badgeX, leadMidY - badgeH / 2, badgeW, badgeH, badgeH / 2);
+      ctx.fill();
+
+      ctx.fillStyle = IMG_COLORS.card;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(badgeText, badgeX + badgeW / 2, leadMidY + 1);
+
+      const names = [];
+      for (let n = 0; n < stats.leaders.length; n++) names.push(playerName(stats.leaders[n]));
+      const leadNames = names.join(' & ') + ' \u00b7 ' + stats.streak + '\u00d7';
+      const leadNameX = badgeX + badgeW + 18;
+      const leadNameMaxW = contentX + contentW - 18 - leadNameX;
+
+      ctx.font = '800 24px ' + FONT_STACK;
+      ctx.fillStyle = IMG_COLORS.ink;
+      ctx.textAlign = 'left';
+      ctx.fillText(ellipsize(ctx, leadNames, leadNameMaxW, '800', 24), leadNameX, leadMidY + 1);
+
+      ctx.textBaseline = 'alphabetic';
+      sy += IMG_STAT_LEAD_H + 18;
+    }
+
+    // Baris tiap pemain: nama + metrik Ngocok / Shutout (dua kolom).
+    const metricW = IMG_STAT_METRIC_W;
+    const metricsW = metricW * 2;
+    const statRowPadX = 22;
+    const statRowInnerH = IMG_STAT_ROW_H - IMG_STAT_ROW_GAP;
+    const statNameMaxW = contentW - statRowPadX * 2 - 46 - metricsW - 14;
+    const metricsX = contentX + contentW - statRowPadX - metricsW;
+    const metricLabels = ['NGOCOK', 'SHUTOUT'];
+
+    for (let i = 0; i < statOrder.length; i++) {
+      const item = statOrder[i];
+      const isLeaderRow = stats.leaders.indexOf(item.index) !== -1;
+      const ry = sy + i * IMG_STAT_ROW_H;
+      const midY = ry + statRowInnerH / 2;
+
+      ctx.fillStyle = isLeaderRow ? IMG_COLORS.pinkSoft : IMG_COLORS.pinkTint;
+      ctx.strokeStyle = IMG_COLORS.ink;
+      ctx.lineWidth = isLeaderRow ? 4 : 3;
+      drawRoundedRect(ctx, contentX, ry, contentW, statRowInnerH, 16);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.textBaseline = 'middle';
+
+      // Peringkat "#n".
+      ctx.textAlign = 'left';
+      ctx.fillStyle = IMG_COLORS.ink;
+      ctx.font = '900 24px ' + FONT_STACK;
+      ctx.fillText('#' + (i + 1), contentX + statRowPadX, midY + 1);
+
+      // Nama pemain (dipotong aman bila kepanjangan).
+      const statNameX = contentX + statRowPadX + 46;
+      ctx.font = '800 24px ' + FONT_STACK;
+      ctx.fillText(
+        ellipsize(ctx, playerName(item.index), statNameMaxW, '800', 24),
+        statNameX, midY + 1
+      );
+
+      // Dua metrik rata kanan: nilai di atas, label kecil di bawah.
+      const values = [item.count, stats.perfect[item.index]];
+      for (let m = 0; m < metricLabels.length; m++) {
+        const colCenter = metricsX + metricW * m + metricW / 2;
+        ctx.textAlign = 'center';
+
+        ctx.fillStyle = IMG_COLORS.ink;
+        ctx.font = '900 28px ' + FONT_STACK;
+        ctx.fillText(String(values[m]), colCenter, midY - 12);
+
+        ctx.fillStyle = IMG_COLORS.muted;
+        ctx.font = '700 14px ' + FONT_STACK;
+        ctx.fillText(metricLabels[m], colCenter, midY + 20);
+      }
+
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    ctx.textAlign = 'left';
+  }
 
   // ---- Garis pemisah putus-putus ----
   ctx.strokeStyle = IMG_COLORS.ink;
@@ -1793,15 +2949,26 @@ function cacheDom() {
   els.players = document.getElementById('players');
   els.recentList = document.getElementById('recentList');
   els.recentEmpty = document.getElementById('recentEmpty');
+  els.changelogList = document.getElementById('changelogList');
+  els.appVersion = document.getElementById('appVersion');
   els.historyFullList = document.getElementById('historyFullList');
   els.historyEmpty = document.getElementById('historyEmpty');
   els.historyModal = document.getElementById('historyModal');
+  els.statsModal = document.getElementById('statsModal');
+  els.statsList = document.getElementById('statsList');
+  els.statsSummary = document.getElementById('statsSummary');
+  els.statsLeaders = document.getElementById('statsLeaders');
+  els.statsEmpty = document.getElementById('statsEmpty');
   els.settingsModal = document.getElementById('settingsModal');
   els.settingsForm = document.getElementById('settingsForm');
   els.winnerModal = document.getElementById('winnerModal');
+  els.winnerVersion = document.getElementById('winnerVersion');
   els.winnerName = document.getElementById('winnerName');
   els.winnerScore = document.getElementById('winnerScore');
   els.rankingList = document.getElementById('rankingList');
+  els.winnerHandalBox = document.getElementById('winnerHandalBox');
+  els.winnerHandalName = document.getElementById('winnerHandalName');
+  els.winnerHandalMeta = document.getElementById('winnerHandalMeta');
   els.confirmModal = document.getElementById('confirmModal');
   els.confirmTitle = document.getElementById('confirmTitle');
   els.confirmMessage = document.getElementById('confirmMessage');
@@ -1809,25 +2976,38 @@ function cacheDom() {
   els.toast = document.getElementById('toast');
   els.alertBanner = document.getElementById('alertBanner');
   els.btnWinner = document.getElementById('btnWinner');
+  els.btnAddRound = document.getElementById('btnAddRound');
   els.year = document.getElementById('year');
   els.yearWinner = document.getElementById('yearWinner');
 }
 
 /** Memasang semua event listener. */
 function bindEvents() {
-  document.getElementById('btnSettings').addEventListener('click', openSettings);
-  document.getElementById('btnCloseSettings').addEventListener('click', function () {
-    closeModal(els.settingsModal);
-  });
+  // Bottom navigation: setiap tab menampilkan layarnya masing-masing.
+  const TAB_HANDLERS = {
+    main: openMain,
+    history: openHistory,
+    stats: openStats,
+    settings: openSettings
+  };
 
-  document.getElementById('btnHistory').addEventListener('click', openHistory);
-  document.getElementById('btnCloseHistory').addEventListener('click', function () {
-    closeModal(els.historyModal);
-  });
+  const tabs = document.querySelectorAll('[data-tab]');
+  for (let i = 0; i < tabs.length; i++) {
+    const handler = TAB_HANDLERS[tabs[i].getAttribute('data-tab')];
+    if (handler) tabs[i].addEventListener('click', handler);
+  }
+
+  // "Semua" pada riwayat singkat (layar utama) -> buka layar Riwayat.
+  const btnHistory = document.getElementById('btnHistory');
+  if (btnHistory) btnHistory.addEventListener('click', openHistory);
+
   document.getElementById('btnClearHistory').addEventListener('click', clearHistoryAction);
 
   document.getElementById('btnNewGame').addEventListener('click', startNewGame);
   document.getElementById('btnNewGameWinner').addEventListener('click', startNewGame);
+
+  // Tombol "Perbarui": mencatat SEMUA skor terisi sebagai satu ronde.
+  document.getElementById('btnAddRound').addEventListener('click', commitRound);
 
   document.getElementById('btnWinner').addEventListener('click', openWinnerModal);
   document.getElementById('btnCloseWinner').addEventListener('click', function () {
@@ -1861,7 +3041,9 @@ function init() {
 
   state = loadState();
 
+  renderVersion();   // versi rilisan (satu sumber: APP_VERSION)
   render();
+  renderChangelog(); // konten statis -> cukup sekali saat init
   bindEvents();
 
   // Bila permainan sudah selesai (mis. halaman di-refresh setelah menang),
