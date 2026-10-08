@@ -59,10 +59,11 @@ const ROUND_GAP_MS = 2 * 60 * 1000;
  *   winner:  null | { player, score, at }
  * }
  *
- * MENGAPA `reach` perlu disimpan (bukan cukup skor saja)?
- * Karena aturan reset bergantung pada SIAPA YANG LEBIH DULU mencapai sebuah
- * milestone (500-999), bukan pada skor saat ini. Urutan sejarah ini adalah
- * "sumber kebenaran" dan HARUS tetap ada walaupun skor pemain turun.
+ * MENGAPA `reach` masih disimpan (bukan cukup skor saja)?
+ * Sebagai RIWAYAT: urutan siapa yang lebih dulu mencapai tiap milestone 500-999.
+ * Data ini dipakai untuk pembacaan/analisis data lama dan dipertahankan walau
+ * skor pemain turun. Aturan reset sendiri TIDAK lagi bergantung padanya — reset
+ * kini murni berbasis rentang skor (lihat determineResets).
  */
 function createDefaultState() {
   return {
@@ -79,8 +80,9 @@ function createDefaultState() {
 
 /* --------------------------- MILESTONE TRACKING ---------------------------
  * `reach[m]` = array index pemain sesuai URUTAN kapan mereka pertama kali
- * mencapai skor >= m. Inilah yang dipakai untuk mengetahui siapa "datang
- * lebih dulu" pada sebuah milestone.
+ * mencapai skor >= m. Dicatat sebagai riwayat "siapa datang lebih dulu" pada
+ * sebuah milestone (dipakai uji & pembacaan data). Reset TIDAK lagi bergantung
+ * pada urutan ini: setiap pemain yang dilewati saat skornya 500-999 direset.
  *
  * Catatan: nilai `reach` TIDAK dihapus saat skor turun (aturan #8), supaya
  * sejarah pencapaian tetap utuh dan tidak bisa dipakai ulang untuk curang.
@@ -104,13 +106,22 @@ function registerMilestones(state, playerIndex, oldScore, newScore) {
  * "Overtakes" = SEBELUMNYA skor pemain <= skor lawan, dan SEKARANG menjadi >.
  * Dengan definisi ini, berakhir seri (tie) BUKAN overtake sehingga tidak
  * akan memicu reset.
+ *
+ * `preScores`/`postScores` (opsional) = skor lawan SEBELUM & SESUDAH aksi.
+ * Keduanya diperlukan untuk SATU RONDE, karena beberapa pemain berubah
+ * bersamaan: syarat "sebelum" dinilai dari skor lawan di awal ronde, sedangkan
+ * syarat "sesudah" dari skor lawan di akhir ronde. Akibatnya sesama pencatat
+ * dalam ronde yang sama tidak saling melewati (mis. semua pemain +100 dari 500
+ * menjadi 600 -> tidak ada yang overtaken). Bila tidak diberikan, dipakai skor
+ * saat ini (perilaku aksi tunggal: hanya satu pemain yang berubah).
  */
-function detectOvertakenPlayers(state, playerIndex, oldScore, newScore) {
+function detectOvertakenPlayers(state, playerIndex, oldScore, newScore, preScores, postScores) {
+  const pre = preScores || state.scores;
+  const post = postScores || state.scores;
   const result = [];
   for (let q = 0; q < PLAYER_COUNT; q++) {
     if (q === playerIndex) continue;
-    const qScore = state.scores[q];
-    if (oldScore <= qScore && newScore > qScore) result.push(q);
+    if (oldScore <= pre[q] && newScore > post[q]) result.push(q);
   }
   return result;
 }
@@ -118,10 +129,10 @@ function detectOvertakenPlayers(state, playerIndex, oldScore, newScore) {
 /**
  * Pemain yang PALING DULU mencapai milestone `m` (null bila belum ada).
  *
- * Inilah "pemilik milestone" yang dipakai determineResets(): seorang pemain
- * direset saat overtaken HANYA jika ia pemilik milestone sebesar skornya saat itu.
- * `state.reach` terus diisi oleh registerMilestones() agar urutan "siapa datang
- * lebih dulu" tetap adil walau skor pemain sempat turun.
+ * `state.reach` tetap diisi oleh registerMilestones() dan tersimpan sebagai
+ * riwayat "siapa datang lebih dulu" (dipakai uji & pembacaan data lama),
+ * TETAPI TIDAK LAGI menentukan siapa yang direset: aturan reset kini murni
+ * berbasis RENTANG SKOR (lihat determineResets).
  */
 function milestoneOwner(state, milestone) {
   const list = state.reach[String(milestone)];
@@ -131,35 +142,35 @@ function milestoneOwner(state, milestone) {
 /**
  * Menentukan pemain yang harus RESET (ke 0) akibat satu aksi penambahan skor.
  *
- * ATURAN INTI — berbasis KEPEMILIKAN MILESTONE (rentang 500-999):
+ * ATURAN INTI — berbasis RENTANG MILESTONE (500-999):
  *  - Reset hanya berlaku untuk pemain yang OVERTAKEN pada aksi ini.
  *  - "Overtaken" berarti: skor penyerang SEBELUM penambahan <= skor lawan, dan
  *    skor penyerang SESUDAH penambahan > skor lawan (lihat detectOvertakenPlayers).
  *    Berakhir SERI bukan overtake, jadi tidak memicu reset.
- *  - Pemain yang overtaken direset HANYA bila ia PEMILIK milestone sebesar skornya
- *    saat ini (yang PALING DULU mencapai skor itu). Pemain yang mencapai nilai
- *    itu BELAKANGAN tidak direset meski ikut overtaken.
+ *  - SEMUA pemain yang overtaken direset bila skornya saat itu berada di rentang
+ *    500-999 — tanpa memandang urutan pencapaian milestone. Jadi pemain yang
+ *    "datang belakangan" pun ikut direset (aturan lama hanya mereset pemilik
+ *    milestone; itu dihapus karena membuat pemain di rentang 500-999 kebal reset).
  *  - Batas rentang 500-999: skor < 500 / > 999 bukan milestone sehingga tidak
- *    memicu reset; skor TEPAT 500 MEMICU reset. Batas ini dijaga karena
- *    milestoneOwner() hanya mengenal milestone di dalam rentang tersebut.
+ *    memicu reset; skor TEPAT 500 MEMICU reset.
  *  - Penyerang TIDAK pernah direset; pemain lain yang tidak overtaken tidak berubah.
  *
- * Contoh (A menyerang; kepemilikan dinilai SEBELUM penambahan):
- *   A = 600 (pemilik 600), B = 600 (bukan pemilik), C = 740. A +200 -> 800.
- *   A overtakes B, tetapi B bukan pemilik milestone 600 -> B TIDAK direset.
- *   A belum melewati C (740), jadi C tetap.
+ * Contoh (A menyerang):
+ *   A = 550, B = 600 (bagaimana pun urutan pencapaiannya), C = 450. C +300 -> 750.
+ *   C melewati A dan B yang keduanya berada di rentang 500-999
+ *   -> A dan B DUA-DUANYA direset ke 0.
  */
 function determineResets(state, overtaken) {
   const resets = [];
   for (let i = 0; i < overtaken.length; i++) {
     const q = overtaken[i];
     if (resets.indexOf(q) !== -1) continue; // jaminan: maksimal SEKALI per pemain per aksi
-    // Reset hanya bila pemain yang overtaken adalah PEMILIK milestone sebesar
-    // skornya saat ini. `state.scores[q]` belum tersentuh aksi ini (hanya skor
-    // penyerang yang diubah), jadi nilainya = skor lawan sebelum penambahan.
-    // milestoneOwner() mengembalikan null untuk skor di luar 500-999, sehingga
-    // batas rentang otomatis terjaga di sini.
-    if (milestoneOwner(state, state.scores[q]) === q) resets.push(q);
+    // Skor lawan belum tersentuh aksi ini (hanya skor penyerang yang diubah),
+    // jadi `state.scores[q]` = skor lawan sebelum penambahan. Skor di luar
+    // rentang 500-999 tidak memicu reset.
+    const score = state.scores[q];
+    if (score < MILESTONE_START || score > MILESTONE_END) continue;
+    resets.push(q);
   }
   return resets;
 }
@@ -444,15 +455,89 @@ function computePlayerStats(history) {
 }
 
 /**
- * Menerapkan perubahan skor secara atomik (tanpa DOM) agar mudah diuji.
+ * Validasi dasar perubahan skor. Mengembalikan alasan penolakan
+ * ('game-over' | 'bad-player' | 'bad-amount') atau null bila valid.
+ */
+function scoreChangeReason(state, playerIndex, amount) {
+  if (!state.gameActive) return 'game-over';
+  if (!Number.isInteger(playerIndex) || playerIndex < 0 || playerIndex >= PLAYER_COUNT) return 'bad-player';
+  // Hanya bilangan bulat & bukan 0 yang dianggap perubahan bermakna.
+  if (!Number.isInteger(amount) || amount === 0) return 'bad-amount';
+  return null;
+}
+
+/**
+ * TAHAP 1 perubahan skor: ubah skor pemain + catat milestone baru yang dicapai
+ * (selalu dicatat, walau nanti pemain itu direset). BELUM menyentuh reset dan
+ * belum menyimpan riwayat, supaya penilaian satu RONDE bisa memakai skor awal
+ * ronde lebih dulu (lihat applyRound).
+ */
+function stageScoreChange(state, playerIndex, amount) {
+  const from = state.scores[playerIndex];
+  const to = from + amount;
+  state.scores[playerIndex] = to;
+  registerMilestones(state, playerIndex, from, to);
+  return { player: playerIndex, amount: amount, from: from, to: to };
+}
+
+/**
+ * TAHAP 2 perubahan skor: tentukan & terapkan reset untuk satu penyerang.
+ * Aturan rentang 500-999 ada di determineResets(). Pemain yang skornya sudah 0
+ * (mis. baru saja direset di ronde yang sama) otomatis dilewati karena skornya
+ * di luar rentang, sehingga tidak pernah muncul entri "reset 0 -> 0".
+ */
+function applyResetsFor(state, staged, overtaken) {
+  const targets = determineResets(state, overtaken);
+  const resetInfo = [];
+  for (let i = 0; i < targets.length; i++) {
+    const q = targets[i];
+    const from = state.scores[q];
+    state.scores[q] = 0;
+    resetInfo.push({ player: q, by: staged.player, from: from, to: 0, milestone: from });
+  }
+  return resetInfo;
+}
+
+/**
+ * TAHAP 3 perubahan skor: susun entri riwayat dari data perubahan + reset-nya.
+ * `round` menandai event-event dari SATU klik Tambah (satu ronde), sehingga
+ * batas ronde tidak perlu disimpulkan ulang saat statistik dihitung.
+ */
+function buildHistoryEvent(staged, resetInfo, roundId, ts) {
+  const event = {
+    ts: ts,
+    player: staged.player,
+    delta: staged.amount,
+    from: staged.from,
+    to: staged.to,
+    resets: resetInfo
+  };
+  if (roundId !== undefined && roundId !== null) event.round = roundId;
+  return event;
+}
+
+/** Menyimpan entri riwayat, sekaligus menjaga batas HISTORY_LIMIT. */
+function pushHistory(state, event) {
+  state.history.push(event);
+  if (state.history.length > HISTORY_LIMIT) {
+    state.history.splice(0, state.history.length - HISTORY_LIMIT);
+  }
+}
+
+/**
+ * Menerapkan SATU perubahan skor (aksi tunggal) secara atomik (tanpa DOM) agar
+ * mudah diuji. Dipakai tombol cepat & tombol Tambah (satu pemain per aksi).
  * Urutan pemrosesan:
- *   1. Deteksi overtake (dinilai dari skor SEBELUM diubah).
- *   2. Ubah skor pemain.
- *   3. Catat milestone baru yang dicapai (selalu, walau nanti ada reset).
- *   4. Tentukan & terapkan reset berdasarkan urutan pencapaian milestone.
+ *   1. Validasi.
+ *   2. Deteksi overtake (dinilai dari skor SEBELUM diubah).
+ *   3. Ubah skor pemain + catat milestone baru.
+ *   4. Tentukan & terapkan reset untuk pemain overtaken di rentang 500-999.
  *   5. Simpan event ke riwayat.
  *   6. Cek pemenang.
  * Mengembalikan objek hasil agar pemanggil bisa memberi umpan balik visual.
+ *
+ * Pada aksi tunggal hanya SATU pemain yang berubah, sehingga skor lawan tidak
+ * bergerak: skor "sebelum" dan "sesudah" mereka sama.
  *
  * `roundId`/`ts` (opsional) dipakai saat satu klik Tambah mencatat BEBERAPA
  * pemain sekaligus: seluruh event dari klik yang sama diberi `round` yang sama
@@ -462,17 +547,9 @@ function computePlayerStats(history) {
 function applyScoreChange(state, playerIndex, amount, roundId, ts) {
   const result = { ok: false, reason: null, event: null, resets: [], winner: null };
 
-  if (!state.gameActive) {
-    result.reason = 'game-over';
-    return result;
-  }
-  if (!Number.isInteger(playerIndex) || playerIndex < 0 || playerIndex >= PLAYER_COUNT) {
-    result.reason = 'bad-player';
-    return result;
-  }
-  // Hanya bilangan bulat & bukan 0 yang dianggap perubahan bermakna.
-  if (!Number.isInteger(amount) || amount === 0) {
-    result.reason = 'bad-amount';
+  const bad = scoreChangeReason(state, playerIndex, amount);
+  if (bad) {
+    result.reason = bad;
     return result;
   }
 
@@ -482,40 +559,18 @@ function applyScoreChange(state, playerIndex, amount, roundId, ts) {
   // (1) Overtake dinilai dari kondisi SEBELUM skor berubah.
   const overtaken = detectOvertakenPlayers(state, playerIndex, oldScore, newScore);
 
-  // (2) Terapkan skor baru.
-  state.scores[playerIndex] = newScore;
+  // (2) Skor baru + milestone.
+  const staged = stageScoreChange(state, playerIndex, amount);
 
-  // (3) Catat milestone baru.
-  registerMilestones(state, playerIndex, oldScore, newScore);
+  // (3) Reset (satu kali per pemain per event -> tidak ada reset berulang).
+  const resetInfo = applyResetsFor(state, staged, overtaken);
 
-  // (4) Reset (satu kali per pemain per event -> tidak ada reset berulang).
-  const resetPlayers = determineResets(state, overtaken);
-  const resetInfo = [];
-  for (let i = 0; i < resetPlayers.length; i++) {
-    const q = resetPlayers[i];
-    const from = state.scores[q];
-    state.scores[q] = 0;
-    resetInfo.push({ player: q, by: playerIndex, from: from, to: 0, milestone: from });
-  }
-
-  // (5) Riwayat. `round` menandai event-event dari SATU klik Tambah (satu ronde),
-  // sehingga batas ronde tidak perlu disimpulkan ulang saat statistik dihitung.
+  // (4) Riwayat.
   const stamp = Number.isFinite(ts) ? ts : Date.now();
-  const event = {
-    ts: stamp,
-    player: playerIndex,
-    delta: amount,
-    from: oldScore,
-    to: newScore,
-    resets: resetInfo
-  };
-  if (roundId !== undefined && roundId !== null) event.round = roundId;
-  state.history.push(event);
-  if (state.history.length > HISTORY_LIMIT) {
-    state.history.splice(0, state.history.length - HISTORY_LIMIT);
-  }
+  const event = buildHistoryEvent(staged, resetInfo, roundId, stamp);
+  pushHistory(state, event);
 
-  // (6) Pemenang.
+  // (5) Pemenang.
   const winner = checkWinner(state);
 
   result.ok = true;
@@ -527,16 +582,22 @@ function applyScoreChange(state, playerIndex, amount, roundId, ts) {
 }
 
 /**
- * Menerapkan SATU RONDE — kumpulan skor dari satu klik "Tambah" — secara atomik
- * (tanpa DOM). Ini adalah jalur utama pencatatan skor pada flow baru.
+ * Menerapkan SATU RONDE — kumpulan skor dari satu klik "Tambah" (atau satu
+ * [Perbarui]) — secara atomik (tanpa DOM). Ini jalur utama pencatatan skor.
  *
  * `entries` = array { player, amount } untuk pemain yang inputnya TERISI.
  * Pemain dengan input kosong TIDAK ikut (tidak dianggap skor 0).
  *
- * Setiap pemain diproses memakai applyScoreChange() yang SAMA, berurutan menurut
- * indeks pemain, dengan `round` id yang sama. Dengan begitu aturan milestone/
- * overtake/reset/pemenang yang sudah berjalan TIDAK berubah — flow ronde hanya
- * menggabungkan beberapa pencatatan menjadi satu event.
+ * ATURAN PENTING — SEMUA PEMAIN DALAM SATU RONDE DICATAT BERSAMAAN:
+ *  1. Skor awal ronde disimpan lebih dulu (`preScores`).
+ *  2. Skor & milestone setiap pemain diterapkan (urut index pemain) TANPA reset.
+ *  3. Overtake baru dinilai setelah seluruh skor ronde diketahui: syarat "sebelum"
+ *     memakai skor AWAL ronde, syarat "sesudah" memakai skor AKHIR ronde.
+ *     Jadi sesama pencatat di ronde yang sama tidak saling mereset — mis. semua
+ *     pemain naik +100 dari 500 ke 600, atau satu pemain naik 600 -> 700 sementara
+ *     lawannya naik 550 -> 650 (yang tetap lebih rendah), tidak ada reset.
+ *  4. Reset hanya untuk pemain yang BENAR-BENAR dilewati dan skornya di rentang
+ *     500-999 (lihat determineResets).
  *
  * Mengembalikan { ok, reason, events[], resets[], winner }.
  */
@@ -583,21 +644,49 @@ function applyRound(state, entries, at) {
   const ts = Number.isFinite(at) ? at : Date.now();
   const roundId = ts;
 
+  // Skor AWAL ronde: dipakai sebagai pembanding "sebelum" pada penilaian overtake.
+  const preScores = state.scores.slice();
+
+  // FASE 1 — skor & milestone setiap pemain diterapkan (belum ada reset).
+  const stagedList = [];
   for (let i = 0; i < valid.length; i++) {
     // Bila permainan berakhir di tengah ronde (mis. skor menembus target),
     // sisa pemain pada ronde itu tidak lagi dicatat.
     if (!state.gameActive) break;
 
-    const r = applyScoreChange(state, valid[i].player, valid[i].amount, roundId, ts);
-    if (!r.ok) continue;
+    const bad = scoreChangeReason(state, valid[i].player, valid[i].amount);
+    if (bad) continue;
 
-    result.events.push(r.event);
-    result.resets = result.resets.concat(r.resets);
-    if (r.winner) result.winner = r.winner;
+    stagedList.push(stageScoreChange(state, valid[i].player, valid[i].amount));
+
+    // Cek pemenang per pencatat (perilaku lama dipertahankan): begitu target
+    // tembus, pencatat berikutnya pada ronde itu tidak lagi diproses.
+    const winner = checkWinner(state);
+    if (winner) result.winner = winner;
   }
 
-  result.ok = result.events.length > 0;
-  if (!result.ok) result.reason = 'no-change';
+  if (stagedList.length === 0) {
+    result.reason = 'no-change';
+    return result;
+  }
+
+  // FASE 2 — reset, dinilai dari skor AWAL ronde vs skor AKHIR ronde sehingga
+  // hasilnya tidak bergantung pada urutan pencatatan.
+  const postScores = state.scores.slice();
+  for (let i = 0; i < stagedList.length; i++) {
+    const staged = stagedList[i];
+    const overtaken = detectOvertakenPlayers(
+      state, staged.player, preScores[staged.player], staged.to, preScores, postScores
+    );
+    const resetInfo = applyResetsFor(state, staged, overtaken);
+    const event = buildHistoryEvent(staged, resetInfo, roundId, ts);
+    pushHistory(state, event);
+
+    result.events.push(event);
+    result.resets = result.resets.concat(resetInfo);
+  }
+
+  result.ok = true;
   return result;
 }
 
@@ -996,12 +1085,26 @@ function focusPlayerInput(playerIndex) {
  * pemain:
  *  - Skor terendah unik -> pemain itu.
  *  - Skor terendah SERI (mis. Pemain 1 skor shutout sedangkan 3 pemain lain
- *    draw di 0; atau semua 0-0-0-0 di awal permainan) -> dipilih SATU secara
+ *    draw di 0; atau semua 0-0-0-0 di awal permainan) -> diundi SATU secara
  *    ACAK, karena hanya satu orang yang mengocok.
- * Pilihan disimpan agar tidak berpindah-pindah tiap render: selama pemain yang
- * dipilih masih termasuk kelompok terendah, ia dipertahankan.
+ *
+ * UNDIAN DIULANG SETIAP KEADAAN PERMAINAN BERUBAH (skor baru dicatat, riwayat
+ * dihapus, atau permainan baru). Jadi selama seri, pengocok TIDAK selalu orang
+ * yang sama — undiannya benar-benar acak. Pilihan baru disimpan bersama sidik
+ * jari keadaan (`shufflerPickKey`), sehingga render ulang TANPA perubahan
+ * keadaan (mis. ganti nama pemain, buka modal) tidak menambah undian dan badge
+ * tidak berpindah-pindah sendiri.
  */
 let shufflerPick = null;
+let shufflerPickKey = null;
+
+/**
+ * Sidik jari keadaan yang memengaruhi undian pengocok: skor seluruh pemain +
+ * jumlah entri riwayat (berubah saat ronde dicatat / riwayat dikosongkan).
+ */
+function shufflerStateKey() {
+  return state.scores.join(',') + '|' + state.history.length;
+}
 
 function currentLowestPlayers() {
   let min = Infinity;
@@ -1017,13 +1120,17 @@ function currentLowestPlayers() {
   // Skor terendah unik -> dialah pengocok.
   if (lowest.length === 1) {
     shufflerPick = lowest[0];
+    shufflerPickKey = shufflerStateKey();
     return lowest;
   }
 
-  // SERI: pertahankan pilihan sebelumnya bila masih termasuk yang terendah;
-  // jika tidak (atau belum pernah dipilih), pilih satu pemain BARU secara acak.
-  if (shufflerPick === null || lowest.indexOf(shufflerPick) === -1) {
+  // SERI: undi ULANG secara acak begitu keadaan permainan berubah; selama
+  // keadaan belum berubah, hasil undian dipertahankan (agar badge tidak
+  // berpindah hanya karena render ulang).
+  const key = shufflerStateKey();
+  if (shufflerPick === null || shufflerPickKey !== key || lowest.indexOf(shufflerPick) === -1) {
     shufflerPick = lowest[Math.floor(Math.random() * lowest.length)];
+    shufflerPickKey = key;
   }
   return [shufflerPick];
 }
@@ -1457,7 +1564,7 @@ function renderStats() {
  * PENTING: naikkan nilai ini SETIAP kali ada perubahan, agar pengguna selalu
  * melihat versi terbaru. Format: "vMAJOR.MINOR".
  */
-const APP_VERSION = 'v1.4';
+const APP_VERSION = 'v1.5';
 
 /**
  * Menampilkan versi rilisan di header (mis. "v1.1") DAN di layar Hasil Permainan
@@ -1473,6 +1580,14 @@ function renderVersion() {
  * Konvensi: entri TERBARU diletakkan paling atas (urutan tampil = urutan array).
  */
 const CHANGELOG_ENTRIES = [
+  {
+    date: '2026-10-08',
+    title: 'fix(rules): reset EVERY overtaken player in 500-999 (milestone-owner condition removed)'
+  },
+  {
+    date: '2026-10-08',
+    title: 'fix(cards): re-roll the shuffler at random on every state change when totals tie'
+  },
   {
     date: '2026-10-07',
     title: 'feat(ui): Result-screen logo & version, "Ngocok" term, consistent buttons'

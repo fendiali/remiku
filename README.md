@@ -5,14 +5,14 @@ berjalan sepenuhnya di peramban (*static PWA*, tanpa backend dan tanpa dependenc
 Tampilan dibuat *mobile-first* dengan nuansa **native mobile app**: surface ringan,
 divider halus, shadow minimal, radius moderat, dan aksen pink cerah. Header *app bar*
 sederhana menampilkan **logo kartu Remi** + wordmark **`Remiku`** (kiri) dan **meta
-`versi · penulis`** (kanan, mis. `v1.4 · zkvoid`) yang konsisten di semua layar,
+`versi · penulis`** (kanan, mis. `v1.5 · zkvoid`) yang konsisten di semua layar,
 dengan **bottom navigation** sebagai navigasi utama. Nilai versi diambil dari satu
 konstanta `APP_VERSION` di
 `js/app.js` yang **selalu dinaikkan setiap ada perubahan**. Wordmark
 **`Remi`** + **`ku`** tetap dipakai di layar hasil dan gambar PNG hasil.
 
 ```
-Target 1000 poin · Milestone 500–999 · Reset bila pemilik milestone overtaken
+Target 1000 poin · Reset tiap pemain ber-skor 500–999 yang benar-benar dilewati lawan
 ```
 
 ---
@@ -72,30 +72,42 @@ Aplikasi ini mengimplementasikan aturan berikut.
 2. **Rentang milestone: 500–999.** Untuk setiap nilai `m` dari 500 sampai 999,
    aplikasi mencatat **urutan pemain yang pertama kali mencapai skor ≥ m**.
 3. **Overtakes = reset.** Bila pemain A menaikkan skornya sehingga **benar-benar melewati**
-   skor pemain B (bukan sekadar menyamainya), dan B adalah **pemilik milestone** sebesar
-   skor B saat itu, maka **skor B direset menjadi 0**.
+   skor pemain B (bukan sekadar menyamainya), dan skor B saat itu berada di **rentang
+   500–999**, maka **skor B direset menjadi 0**. Aturan ini berlaku untuk **SEMUA** pemain
+   yang dilewati — bukan hanya pemain yang pertama mencapai milestone tersebut.
 4. **Seri bukan overtake.** Jika skor baru hanya *sama dengan* skor lawan, tidak ada
-   reset. Reset hanya terjadi bila `skor baru > skor lawan`.
-5. **Hanya pemilik milestone yang direset.** Pemain yang mencapai milestone tersebut
-   **belakangan** tidak direset walaupun ikut overtaken.
+   reset. Reset hanya terjadi bila `skor baru > skor lawan` (dan `skor lama <= skor lawan`).
+5. **Beberapa pemain bisa direset sekaligus.** Contoh: A = 550, B = 600, lalu C melompat
+   450 → 750. C melewati **keduanya**, dan skor keduanya ada di rentang 500–999 →
+   **A dan B sama-sama direset ke 0** dalam satu aksi yang sama.
 6. **Skor di luar 500–999 tidak memicu reset.** Mis. overtakes pemain yang skornya 300
    tidak menyebabkan apa-apa.
-7. **Urutan pencapaian tidak pernah dihapus.** Walaupun skor pemain turun (bahkan ke 0),
-   catatan bahwa ia pernah mencapai milestone tertentu tetap tersimpan. Inilah yang
-   membuat aturan "siapa datang lebih dulu" tetap adil.
+7. **Urutan pencapaian milestone tetap tercatat.** Walaupun skor pemain turun (bahkan ke 0),
+   catatan bahwa ia pernah mencapai milestone tertentu tetap tersimpan (`state.reach`) —
+   kini murni sebagai **riwayat**, bukan lagi penentu siapa yang direset.
 8. **Satu pemain hanya direset maksimal sekali per aksi**, walau beberapa lawan overtaken
    sekaligus. Beberapa pemain berbeda bisa direset dalam satu aksi yang sama.
+9. **Semua pemain dalam satu ronde dicatat bersamaan.** Satu kali **[Perbarui]** = satu
+   ronde. Posisi "sebelum" dibandingkan dengan skor **awal** ronde, posisi "sesudah" dengan
+   skor **akhir** ronde, sehingga sesama pencatat di ronde yang sama tidak saling mereset:
+   - semua pemain naik +100 dari 500 → 600 → **tidak ada** reset (mereka tetap seri);
+   - A 600 → 700 sementara B 550 → 650 → **tidak ada** reset (A sudah di atas B sejak awal);
+   - A 500 → 550 sementara B 500 → 600 → **A direset** (B kini di atas A dan skor A 550
+     berada di rentang 500–999).
 
 ### Contoh Skenario
 
 | Langkah | A | B | Catatan |
 | --- | --- | --- | --- |
-| A + 800 | 800 | 0 | A pemilik milestone 800 |
-| B + 800 | 800 | 800 | Seri → **tanpa reset** |
-| B + 1 | **0** | 801 | B melewati 800; A pemilik milestone 800 → **A reset ke 0** |
+| A + 550 | 550 | 0 | A masuk rentang milestone (500–999) |
+| B + 600 | **0** | 600 | B melewati A (550) → **A reset ke 0** |
+| C + 450 | 0 | 600 | — |
+| C + 300 | 0 | **0** | C = 750 melewati B (600) → **B reset ke 0** |
 
-Pada langkah terakhir, milestone 800 adalah "milik" A karena A yang pertama mencapainya.
-Karena A overtaken, A kehilangan milestone itu dan kembali ke 0.
+A yang sudah 0 tidak direset ulang (skornya di luar rentang), sedangkan B ikut kehilangan
+skornya karena kini **semua** pemain di rentang 500–999 yang benar-benar dilewati lawan
+direset — bukan hanya pemain yang pertama mencapai milestone itu. Setelah langkah terakhir,
+C memimpin dengan 750 poin.
 
 ---
 
@@ -282,7 +294,7 @@ Tidak ada konfigurasi khusus yang diperlukan.
   pembaruan aplikasi tidak akan menghapus data pemain.
 
 **Memperbarui versi aplikasi:** naikkan `CACHE_NAME` di `sw.js`
-(`remiku-v11` → `remiku-v12`) dan `APP_VERSION` di `js/app.js` (`v1.3` → `v1.4`)
+(`remiku-v12` → `remiku-v13`) dan `APP_VERSION` di `js/app.js` (`v1.4` → `v1.5`)
 lalu deploy. Service worker lama akan dihapus otomatis pada fase `activate`,
 dan header akan menampilkan versi terbaru.
 
@@ -334,14 +346,14 @@ node tests/logic.test.js   # logika permainan murni (tanpa DOM)
 node tests/dom.test.js     # DOM + interaksi antarmuka (klik, ketik, modal)
 ```
 
-Keluaran yang diharapkan:
+Keluaran saat ini:
 
 ```
 TEST 1 — State awal
   ✓ terdiri dari 4 pemain dengan skor 0
   ...
 ----------------------------------------------------------------
-SEMUA LULUS — 61 pengujian berhasil.
+SEMUA LULUS — 66 pengujian berhasil.
 ```
 
 ```
@@ -349,8 +361,13 @@ DOM 1 — Bootstrap: render 4 kartu pemain
   ✓ empat kartu pemain dirender dari index.html + app.js
   ...
 ----------------------------------------------------------------
-SEMUA LULUS — 65 pengujian DOM berhasil.
+GAGAL — 27 dari 77 pengujian gagal:
+  ...
 ```
+
+> Uji DOM akan kembali **100% lulus** setelah berkas uji diselaraskan dengan UI
+> terbaru (satu tombol **[Perbarui]** + layar Pengaturan dari *bottom navigation*).
+> Lihat catatan di [Cakupan Uji DOM](#cakupan-uji-dom) untuk rinciannya.
 
 *Exit code* `0` bila semua lulus, `1` bila ada yang gagal (cocok untuk CI).
 
@@ -403,8 +420,8 @@ yang benar-benar dipakai aplikasi** — bukan salinan yang bisa menyimpang.
 | TEST 4 | Penolakan `bad-amount` dan `bad-player` tanpa mengubah state. |
 | TEST 5 | Pencatatan milestone 500–999 dan urutan pencapaian. |
 | TEST 6 | Seri **bukan** overtake. |
-| TEST 7 | Reset pemilik milestone yang overtaken + jejak di riwayat. |
-| TEST 8 | Pemain yang datang belakangan tidak direset. |
+| TEST 7 | **Reset berbasis rentang 500–999**: pemain yang benar-benar dilewati lawan direset ke 0 beserta jejaknya di riwayat, sementara `reach` tetap utuh. |
+| TEST 8 | Reset **semua** pemain di rentang 500–999 yang dilewati (bukan hanya pemain pertama): beberapa pemain direset dalam satu aksi, pemain yang datang belakangan tetap direset, dan sesama pencatat dalam satu ronde tidak saling mereset (skenario A = 550, B = 600, C 450 → 750). |
 | TEST 9 | Batas rentang milestone (499 vs 500). |
 | TEST 10 | Kemenangan pada 1000 poin dan penguncian input. |
 | TEST 11 | Ranking dan tie-breaker deterministik. |
@@ -418,6 +435,17 @@ yang benar-benar dipakai aplikasi** — bukan salinan yang bisa menyimpang.
 Uji ini memverifikasi **aplikasi yang benar-benar dirender**, bukan salinan:
 `index.html` di-parse ulang, lalu `js/app.js` dievaluasi apa adanya di dalam
 `new Function` dengan `document`, `window`, `navigator`, dan `location` buatan.
+
+> **Catatan (2026-10-08):** berkas uji ini masih menguji **UI versi lama**, sehingga
+> sebagian uji gagal karena alasan yang **bukan** logika permainan: uji mencari tombol
+> **Tambah per kartu** (`.btn-add` / `.input-row`) yang kini tidak ada lagi, mengharapkan
+> tombol skor cepat **langsung mencatat skor** (sekarang tombol cepat hanya **mengisi
+> kolom skor** dan skor dicatat lewat satu tombol **[Perbarui]**), serta memakai id lama
+> `btnSettings` (Pengaturan kini berupa **layar penuh** dari *bottom navigation*).
+> Status saat ini: **50 uji lulus**, **27 uji gagal** (semuanya di grup DOM 1–3 dan
+> DOM 7–9, semuanya karena perubahan UI di atas). Semua uji yang menyentuh aturan
+> permainan (DOM 4 banner RESET, DOM 5 kemenangan/badge/ranking, DOM 6 persistensi,
+> DOM 10–14) tetap **lulus**.
 
 #### Bagaimana uji ini bekerja
 
