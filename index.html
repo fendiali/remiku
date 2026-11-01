@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Remiku — Papan Skor Remi</title>
-  <meta name="description" content="Remiku: papan skor permainan kartu Remi untuk 4 pemain, dengan aturan milestone 500-999, target poin yang dapat diatur, pencatatan skor per ronde, dan statistik pemain (Ngocok, Skor Shutout, Pengocok Handal).">
+  <meta name="description" content="Remiku: papan skor permainan kartu Remi untuk 4 pemain, dengan aturan milestone 500 sampai target poin, target poin yang dapat diatur, pencatatan skor per ronde, dan statistik pemain (Ngocok, Skor Shutout, Pengocok Handal, serta sisa ngocok untuk menggantikan predikat). Hasil permainan bisa disimpan sebagai gambar PNG berisi pemenang, Pengocok Handal, MVP, dan statistik.">
   <meta name="theme-color" content="#FF4D9D">
   <meta name="color-scheme" content="light">
 
@@ -39,7 +39,7 @@
     <!-- Meta kanan: versi (id tetap agar renderVersion() dari APP_VERSION
          mengisinya) + penulis. Teks awal versi disamakan agar tidak berkedip. -->
     <span class="app-meta">
-      <span class="app-version" id="appVersion">v1.5</span>
+      <span class="app-version" id="appVersion">v1.8</span>
       <span class="app-meta-sep" aria-hidden="true">&middot;</span>
       <span class="app-author">zkvoid</span>
     </span>
@@ -184,23 +184,61 @@
         <span class="brand-wordmark"><span class="brand-remi">Remi</span><span class="brand-ku">ku</span></span>
       </div>
       <!-- Versi + kredit tepat di bawah logo (id diisi ulang oleh renderVersion()). -->
-      <p class="winner-meta"><span id="winnerVersion">v1.5</span> &middot; zkvoid</p>
+      <p class="winner-meta"><span id="winnerVersion">v1.8</span> &middot; zkvoid</p>
       <p class="winner-kicker" id="winnerTitle">Hasil Permainan</p>
-      <p class="winner-trophy" aria-hidden="true">&#127942;</p>
 
+      <!-- Kartu pemenang: ikon piala (SVG bergaris) + pil "Pemenang" + nama +
+           skor. Ikon memakai SVG, bukan emoji, agar bentuknya konsisten di
+           semua platform (emoji berbeda-beda tiap sistem operasi). -->
       <div class="winner-box">
-        <p class="winner-flag">Pemenang</p>
+        <p class="award-row">
+          <span class="award-icon award-icon-win" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <path d="M6 3.4h12V9a6 6 0 0 1-12 0V3.4Z"/>
+              <path d="M6 5H4.5a2.5 2.5 0 0 0 0 5H6"/>
+              <path d="M18 5h1.5a2.5 2.5 0 0 1 0 5H18"/>
+              <path d="M12 15v3"/>
+              <path d="M8.6 18h6.8l1.6 3H7l1.6-3Z"/>
+            </svg>
+          </span>
+          <span class="winner-flag">Pemenang</span>
+        </p>
         <p class="winner-name" id="winnerName">&mdash;</p>
         <p class="winner-score" id="winnerScore">1000 poin</p>
       </div>
 
-      <!-- Kartu kedua layar hasil: Pengocok Handal (tepat di bawah pemenang).
-           Kartu ini SELALU tampil; diberi kelas .is-empty (gaya netral) bila
-           belum ada pemain dengan rentetan >= 4 ronde. -->
-      <div class="handal-box" id="winnerHandalBox">
-        <p class="handal-flag">Pengocok Handal</p>
-        <p class="handal-name" id="winnerHandalName">&mdash;</p>
-        <p class="handal-meta" id="winnerHandalMeta"></p>
+      <!-- Dua kartu penghargaan BERDAMPINGAN (grid 2 kolom) tepat di bawah
+           pemenang: Pengocok Handal + MVP. Keduanya SELALU tampil dan bergaya
+           netral (.is-empty) bila syaratnya belum terpenuhi. -->
+      <div class="award-grid">
+        <!-- Pengocok Handal: penyandang rentetan skor terendah >= 4 ronde. -->
+        <div class="handal-box" id="winnerHandalBox">
+          <p class="award-row">
+            <span class="award-icon award-icon-handal" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+                <rect x="4.8" y="6.6" width="10" height="13.4" rx="2.4"/>
+                <path d="M19.2 15.8V6.4a2.4 2.4 0 0 0-2.4-2.4H11.2"/>
+              </svg>
+            </span>
+            <span class="handal-flag">Pengocok Handal</span>
+          </p>
+          <p class="handal-name" id="winnerHandalName">&mdash;</p>
+          <p class="handal-meta" id="winnerHandalMeta"></p>
+        </div>
+
+        <!-- MVP: pemain dengan SKOR SHUTOUT (250/300) TERBANYAK. -->
+        <div class="mvp-box" id="winnerMvpBox">
+          <p class="award-row">
+            <span class="award-icon award-icon-mvp" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+                <path d="M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6-5.4-2.9-5.4 2.9 1-6L3.2 9.6l6.1-.9L12 3.2Z"/>
+              </svg>
+            </span>
+            <span class="mvp-flag">MVP</span>
+          </p>
+          <p class="mvp-name" id="winnerMvpName">&mdash;</p>
+          <p class="mvp-meta" id="winnerMvpMeta"></p>
+        </div>
       </div>
 
       <h3 class="winner-subtitle">Ranking</h3>
@@ -211,7 +249,7 @@
         <button id="btnNewGameWinner" class="btn btn-danger" type="button">Permainan Baru</button>
         <button id="btnCloseWinner" class="btn btn-plain" type="button">Tutup</button>
       </div>
-      <p class="modal-foot">&copy; <span id="yearWinner">2026</span> Remiku &middot; Powered by zkvoid</p>
+      <p class="modal-foot">&copy; <span id="yearWinner">2026</span> Remiku &middot; Build with ☕️ by zkvoid</p>
     </div>
   </div>
 

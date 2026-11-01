@@ -1,7 +1,7 @@
 {
   "name": "Remiku",
   "short_name": "Remiku",
-  "description": "Papan skor permainan kartu Remi untuk 4 pemain dengan aturan milestone 500-999 dan target 1000 poin.",
+  "description": "Papan skor permainan kartu Remi untuk 4 pemain dengan aturan milestone 500 sampai target poin, target yang dapat diatur, serta kartu hasil berisi pemenang, Pengocok Handal, dan MVP yang bisa disimpan sebagai gambar.",
   "lang": "id",
   "dir": "ltr",
   "start_url": "./",

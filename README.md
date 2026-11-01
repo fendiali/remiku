@@ -5,14 +5,14 @@ berjalan sepenuhnya di peramban (*static PWA*, tanpa backend dan tanpa dependenc
 Tampilan dibuat *mobile-first* dengan nuansa **native mobile app**: surface ringan,
 divider halus, shadow minimal, radius moderat, dan aksen pink cerah. Header *app bar*
 sederhana menampilkan **logo kartu Remi** + wordmark **`Remiku`** (kiri) dan **meta
-`versi · penulis`** (kanan, mis. `v1.5 · zkvoid`) yang konsisten di semua layar,
+`versi · penulis`** (kanan, mis. `v1.8 · zkvoid`) yang konsisten di semua layar,
 dengan **bottom navigation** sebagai navigasi utama. Nilai versi diambil dari satu
 konstanta `APP_VERSION` di
 `js/app.js` yang **selalu dinaikkan setiap ada perubahan**. Wordmark
 **`Remi`** + **`ku`** tetap dipakai di layar hasil dan gambar PNG hasil.
 
 ```
-Target 1000 poin · Reset tiap pemain ber-skor 500–999 yang benar-benar dilewati lawan
+Target 1000 poin · Reset tiap pemain ber-skor 500–target yang benar-benar dilewati lawan
 ```
 
 ---
@@ -49,13 +49,12 @@ Target 1000 poin · Reset tiap pemain ber-skor 500–999 yang benar-benar dilewa
 | Riwayat reset | Peristiwa reset tersimpan lengkap (siapa overtaken oleh siapa, dari berapa ke 0). |
 | Banner RESET | Banner kuning dengan ikon `⚠` dan prefix `RESET ·` agar pemain langsung tahu **mengapa** skornya jadi 0. |
 | Nama pemain | Bisa diubah kapan saja dan tersimpan otomatis (maks. 24 karakter). |
-| Layar hasil | Dua kartu status bertumpuk yang sejalan dengan badge kartu: **kartu Pemenang** (nama + skor) lalu **kartu Pengocok Handal** (penyandang + panjang rentetan, mis. `Pemain 1 · 5×`; bergaya netral `Belum ada · belum memenuhi syarat (min. 4 ronde)` bila belum ada yang ≥ 4 ronde), diikuti **ranking lengkap**. Tabel statistik per pemain tidak lagi di sini — ada di layar **Statistik**. Layar ini dibuka dengan **logo kartu + wordmark `Remiku`** dan baris **`versi · zkvoid`** (dari konstanta `APP_VERSION`) tepat seperti header. |
-| Layar Statistik | Daftar ringkas tiap pemain (**Ngocok** = jumlah ronde di mana pemain punya **TOTAL skor terendah** / **Shutout** = jumlah skor ronde 250/300 — kolom **Terendah** lama dihapus karena selalu sama dengan **Ngocok**; baris dibuat lebih padat) + banner **Pengocok Handal** dengan panjang rentetan sebagai angka besar. Callout ini **SELALU** tampil: siapa penyandangnya (badge pink + panjang rentetan) bila sudah ada yang ≥ 4 ronde, atau **pemimpin sementara** ber-gaya netral (mis. `Pemain 1 · 3× — belum memenuhi syarat`) bila belum ada — jadi info "siapa calon Pengocok Handal" selalu terlihat. |
+| Layar hasil | **Kartu pemenang besar** di atas, lalu **dua kartu penghargaan berdampingan (grid 2 kolom)**: **Pengocok Handal** (penyandang + panjang rentetan, mis. `4× Ngocok berturut-turut`) dan **MVP** (pemain dengan **Skor Shutout 250/300 terbanyak**, mis. `4× Skor Shutout (250/300)`; seri → semua nama ditampilkan), diikuti **ranking lengkap**. Tiap kartu diberi **ikon SVG bergaris di dalam chip lingkaran** (piala hijau untuk pemenang, dua kartu pink untuk Pengocok Handal, bintang amber untuk MVP) — bukan emoji, jadi bentuk & warnanya identik di semua platform. Kartu Handal & MVP **selalu** tampil dan bergaya netral (`Belum ada`) bila syaratnya belum terpenuhi. Tabel statistik per pemain tidak lagi di sini — ada di layar **Statistik**. Layar ini dibuka dengan **logo kartu + wordmark `Remiku`** dan baris **`versi · zkvoid`** (dari konstanta `APP_VERSION`) tepat seperti header. |
+| Layar Statistik | Daftar ringkas tiap pemain (**Ngocok** = jumlah ronde di mana pemain punya **TOTAL skor terendah** / **Shutout** = jumlah skor ronde 250/300 / **Butuh** = berapa kali lagi harus ngocok **berturut-turut** untuk menggantikan predikat Pengocok Handal; penyandang saat ini ditandai `—`) + banner **Pengocok Handal** dengan panjang rentetan sebagai angka besar. Callout ini **SELALU** tampil: siapa penyandangnya (badge pink + panjang rentetan) bila sudah ada yang ≥ 4 ronde, atau **pemimpin sementara** ber-gaya netral (mis. `Pemain 1 · 3× — belum memenuhi syarat · butuh 1× lagi`) bila belum ada — jadi info "siapa calon Pengocok Handal" selalu terlihat. |
 | Bottom navigation | Navigasi utama **Main · Riwayat · Statistik · Pengaturan** (fixed di bawah, aman *safe-area*, ikon + label, penanda aktif pink). |
 | Layar navigasi | Riwayat, Statistik, dan Pengaturan berupa **layar penuh** di dalam halaman (bukan lagi modal). |
 | Modal bottom-sheet | Hanya **Hasil Permainan** dan **Konfirmasi** yang tampil sebagai bottom-sheet di ponsel (≥ 600 px jadi dialog tengah). |
-| Simpan hasil | Ekspor hasil menjadi gambar **PNG** lewat Canvas API (900 px, tajam di layar retina), dibuat **sinkron** di dalam gestur ketukan agar unduhan tidak diblokir peramban. Gambar memuat **logo kartu + wordmark `Remiku`** dengan baris **`versi · zkvoid`**, pemenang, ranking, **dan statistik lengkap** (callout pengocok handal + panjang rentetannya + hitungan **Ngocok / Shutout** tiap pemain). |
-| Bagikan | Di perangkat sentuh (iOS/Android) memakai *Web Share API*; di desktop langsung mengunduh berkas. Selalu ada *fallback* unduhan. |
+| Simpan hasil | Ekspor hasil menjadi gambar **PNG** lewat Canvas API (900 px, tajam di layar retina), dibuat **sinkron** di dalam gestur ketukan lalu **langsung diunduh** ke perangkat (tanpa *share sheet*). Gambar memuat **logo kartu + wordmark `Remiku`** dengan baris **`versi · zkvoid`**, kotak pemenang ber-ikon piala, **dua kartu penghargaan berdampingan** (Pengocok Handal + MVP) dengan **ikon vektor** yang sama seperti di layar, ranking, **dan statistik lengkap** (hitungan **Ngocok / Shutout / Butuh** tiap pemain). |
 | Input skor negatif | Tombol **±** di dalam kolom skor (keypad numerik ponsel tidak punya tombol minus) + normalisasi otomatis varian minus Unicode. |
 | Offline | Setelah kunjungan pertama, aplikasi bisa dibuka tanpa internet (service worker). |
 | Installable | Bisa dipasang ke home screen Android/iOS sebagai PWA. |
@@ -69,31 +68,48 @@ Aplikasi ini mengimplementasikan aturan berikut.
 
 1. **Target kemenangan: 1000 poin.** Pemain pertama yang mencapai skor **≥ 1000**
    memenangkan permainan. Setelah menang, seluruh input skor dinonaktifkan.
-2. **Rentang milestone: 500–999.** Untuk setiap nilai `m` dari 500 sampai 999,
+2. **Rentang milestone: 500 sampai (target poin − 1).** Untuk setiap nilai `m`
+   dari 500 sampai satu poin di bawah target (default target 1000 → 500–999),
    aplikasi mencatat **urutan pemain yang pertama kali mencapai skor ≥ m**.
-3. **Overtakes = reset.** Bila pemain A menaikkan skornya sehingga **benar-benar melewati**
-   skor pemain B (bukan sekadar menyamainya), dan skor B saat itu berada di **rentang
-   500–999**, maka **skor B direset menjadi 0**. Aturan ini berlaku untuk **SEMUA** pemain
-   yang dilewati — bukan hanya pemain yang pertama mencapai milestone tersebut.
-4. **Seri bukan overtake.** Jika skor baru hanya *sama dengan* skor lawan, tidak ada
-   reset. Reset hanya terjadi bila `skor baru > skor lawan` (dan `skor lama <= skor lawan`).
-5. **Beberapa pemain bisa direset sekaligus.** Contoh: A = 550, B = 600, lalu C melompat
-   450 → 750. C melewati **keduanya**, dan skor keduanya ada di rentang 500–999 →
-   **A dan B sama-sama direset ke 0** dalam satu aksi yang sama.
-6. **Skor di luar 500–999 tidak memicu reset.** Mis. overtakes pemain yang skornya 300
-   tidak menyebabkan apa-apa.
-7. **Urutan pencapaian milestone tetap tercatat.** Walaupun skor pemain turun (bahkan ke 0),
-   catatan bahwa ia pernah mencapai milestone tertentu tetap tersimpan (`state.reach`) —
-   kini murni sebagai **riwayat**, bukan lagi penentu siapa yang direset.
-8. **Satu pemain hanya direset maksimal sekali per aksi**, walau beberapa lawan overtaken
-   sekaligus. Beberapa pemain berbeda bisa direset dalam satu aksi yang sama.
-9. **Semua pemain dalam satu ronde dicatat bersamaan.** Satu kali **[Perbarui]** = satu
-   ronde. Posisi "sebelum" dibandingkan dengan skor **awal** ronde, posisi "sesudah" dengan
-   skor **akhir** ronde, sehingga sesama pencatat di ronde yang sama tidak saling mereset:
-   - semua pemain naik +100 dari 500 → 600 → **tidak ada** reset (mereka tetap seri);
-   - A 600 → 700 sementara B 550 → 650 → **tidak ada** reset (A sudah di atas B sejak awal);
-   - A 500 → 550 sementara B 500 → 600 → **A direset** (B kini di atas A dan skor A 550
-     berada di rentang 500–999).
+   Bila target diubah (mis. 1500), rentang ikut menjadi 500–1499.
+3. **Overtake = reset.** Bila pemain A **menaikkan** skornya sehingga
+   **benar-benar melewati** skor pemain B (bukan sekadar menyamainya) dan
+   berakhir di atas skor B, sedangkan skor B berada di rentang milestone, maka
+   **skor B direset menjadi 0**. Aturan ini berlaku untuk **SEMUA** pemain yang
+   dilewati — bukan hanya pemain yang pertama mencapai milestone tersebut.
+4. **Seri bukan overtake.** Jika skor baru hanya *sama dengan* skor lawan, tidak
+   ada reset. Penyerang juga harus **berakhir di atas** lawan: bila lawan ikut
+   naik dan berakhir lebih tinggi, tidak ada reset. Skor yang **turun** tidak
+   pernah dianggap menyalip siapa pun.
+5. **Pemain yang "dikejar" bisa reset karena skornya turun.** Pemain yang
+   **pertama kali mencapai** skornya (pemilik milestone) direset bila skornya
+   sendiri **turun** sehingga berakhir **di bawah lawan yang tadinya setara /
+   lebih rendah**. Pemain yang datang **belakangan** tidak direset hanya karena
+   posisinya di bawah; ia tetap direset bila benar-benar dilewati kenaikan lawan
+   (aturan 3).
+6. **Beberapa pemain bisa direset sekaligus.** Contoh: A = 550, B = 600, lalu C
+   melompat 450 → 750. C melewati **keduanya**, dan skor keduanya ada di rentang
+   milestone → **A dan B sama-sama direset ke 0** dalam satu aksi yang sama.
+7. **Skor di luar rentang tidak memicu reset.** Mis. skor 300 (di bawah 500)
+   tidak menyebabkan apa-apa; skor ≥ target berarti permainan sudah selesai.
+8. **Urutan pencapaian milestone tetap tercatat.** Walaupun skor pemain turun
+   (bahkan ke 0), catatan bahwa ia pernah mencapai milestone tertentu tetap
+   tersimpan (`state.reach`) — dipakai sebagai **riwayat** sekaligus untuk
+   mengenali pemain yang **"dikejar"** (pemilik pertama sebuah skor).
+9. **Satu pemain hanya direset maksimal sekali per ronde**, walau beberapa lawan
+   dilewati sekaligus. Beberapa pemain berbeda bisa direset dalam satu ronde
+   yang sama.
+10. **Semua pemain dalam satu ronde dicatat bersamaan.** Satu kali **[Perbarui]** = satu
+    ronde. Posisi "sebelum" dibandingkan dengan skor **awal** ronde, posisi "sesudah" dengan
+    skor **akhir** ronde, sehingga hasilnya tidak bergantung urutan pencatatan:
+    - semua pemain naik +100 dari 500 → 600 → **tidak ada** reset (mereka tetap seri);
+    - A 600 → 700 sementara B 550 → 650 → **tidak ada** reset (A sudah di atas B sejak awal);
+    - A 500 → 550 sementara B 500 → 600 → **A direset** (B kini di atas A dan skor A 550
+      berada di rentang 500–999).
+    - A 550 → 515 sementara B 550 → 510 → **tidak ada** reset (A tidak pernah naik
+      melewati B; B hanya tertinggal, dan B bukan pemilik pertama skornya).
+    - A 550 → 510 sementara B 550 → 515 → **A direset** (A pemilik pertama 510 dan
+      kini berada di bawah B).
 
 ### Contoh Skenario
 
@@ -105,9 +121,27 @@ Aplikasi ini mengimplementasikan aturan berikut.
 | C + 300 | 0 | **0** | C = 750 melewati B (600) → **B reset ke 0** |
 
 A yang sudah 0 tidak direset ulang (skornya di luar rentang), sedangkan B ikut kehilangan
-skornya karena kini **semua** pemain di rentang 500–999 yang benar-benar dilewati lawan
+skornya karena kini **semua** pemain di rentang milestone yang benar-benar dilewati lawan
 direset — bukan hanya pemain yang pertama mencapai milestone itu. Setelah langkah terakhir,
 C memimpin dengan 750 poin.
+
+#### Skor berdekatan (dua pemain atau lebih)
+
+Semua pemain dalam satu **[Perbarui]** dinilai bersamaan. Contoh: A mencapai 550 lebih
+dulu, B menyusul 550, lalu satu ronde berisi penurunan skor:
+
+| Ronde | A | B | Catatan |
+| --- | --- | --- | --- |
+| A -35, B -40 | 515 | 510 | **tidak ada reset**: A tidak pernah naik melewati B |
+| A -40, B -35 | **0** | 515 | A (pemilik pertama 550) tertinggal di bawah B → **A reset** |
+
+Pola yang sama berlaku untuk 4 pemain: bila keempatnya di 550 (A paling dulu) lalu
+semua turun, **hanya A** yang berpotensi reset — yaitu saat skornya berakhir di bawah
+pemain lain. B/C/D yang datang belakangan tidak reset hanya karena posisinya lebih
+rendah; mereka baru reset jika ada lawan yang **naik** melewati skornya.
+
+Ketika A 650 dan B 645 lalu A -40 dan B -25 (A = 610, B = 620), **A reset** karena
+A pemilik pertama 610 dan kini berada di bawah B.
 
 ---
 
@@ -127,9 +161,9 @@ C memimpin dengan 750 poin.
 5. Ketuk tab **Riwayat** pada *bottom navigation* (atau tombol **Semua** di panel
    *Riwayat Terbaru*) untuk membuka riwayat lengkap (tersedia tombol **Hapus**).
 6. Setelah ada pemain mencapai 1000 poin, layar **Hasil Permainan** terbuka otomatis.
-   Ketuk **Simpan Hasil** untuk menyimpan gambar PNG: di desktop berkas langsung
-   terunduh (mis. folder *Downloads*), di ponsel *share sheet* terbuka dan Anda bisa
-   memilih **Simpan Gambar / Save Image**.
+   Ketuk **Simpan Hasil** untuk **langsung menyimpan** gambar PNG ke perangkat
+   (folder *Downloads* / *Files*, nama berkas `remiku-hasil-YYYY-MM-DD.png`) —
+   tanpa dialog berbagi, satu ketukan = satu berkas tersimpan.
 7. Ketuk **Permainan Baru** (kini di layar **Pengaturan**) untuk mengosongkan skor,
    riwayat, dan urutan milestone. Nama pemain tetap dipertahankan.
 
@@ -173,8 +207,9 @@ Di dalam `js/app.js` terdapat penanda berikut:
 Blok di antara penanda itu **murni logika** — tidak menyentuh DOM maupun
 `localStorage`. Semua fungsi inti berada di sana: `createDefaultState`,
 `registerMilestones`, `detectOvertakenPlayers`, `milestoneOwner`,
-`determineResets`, `checkWinner`, `computeRanking`, `applyScoreChange`,
-dan `parseScoreInput`.
+`milestoneEndOf`, `determineResets`, `determineActorResets`, `checkWinner`,
+`computeRanking`, `applyScoreChange`, `computePlayerStats`, `computeMvp`, dan
+`parseScoreInput`.
 
 Karena murni, blok tersebut dapat diekstrak dan dijalankan langsung oleh Node.js
 untuk pengujian otomatis (lihat [Pengujian Otomatis](#pengujian-otomatis)).
@@ -269,7 +304,7 @@ Tidak ada konfigurasi khusus yang diperlukan.
 - **Wajib HTTPS** agar service worker aktif dan PWA dapat dipasang.
   (`localhost` dikecualikan dan tetap dianggap sebagai konteks aman.)
 - **Setelah memperbarui berkas**, naikkan nilai `CACHE_NAME` di `sw.js`
-  (mis. `remiku-v11` → `remiku-v12`) agar pengguna lama mendapat versi terbaru.
+  (mis. `remiku-v15` → `remiku-v16`) agar pengguna lama mendapat versi terbaru.
   Data pemain di `localStorage` **tidak** ikut terhapus.
 - Tidak perlu mengatur header khusus, tetapi bila bisa, tambahkan
   `Cache-Control: no-cache` untuk `sw.js` dan `index.html` agar pembaruan
@@ -294,7 +329,7 @@ Tidak ada konfigurasi khusus yang diperlukan.
   pembaruan aplikasi tidak akan menghapus data pemain.
 
 **Memperbarui versi aplikasi:** naikkan `CACHE_NAME` di `sw.js`
-(`remiku-v12` → `remiku-v13`) dan `APP_VERSION` di `js/app.js` (`v1.4` → `v1.5`)
+(`remiku-v15` → `remiku-v16`) dan `APP_VERSION` di `js/app.js` (`v1.7` → `v1.8`)
 lalu deploy. Service worker lama akan dihapus otomatis pada fase `activate`,
 dan header akan menampilkan versi terbaru.
 
@@ -316,7 +351,7 @@ dan header akan menampilkan versi terbaru.
     version: 1,                 // versi skema data
     names:   ["Pemain 1", ...], // 4 nama pemain
     scores:  [0, 0, 0, 0],      // skor terkini
-    reach:   { "500": [0, 2] }, // urutan pemain yang mencapai tiap milestone
+    reach:   { "500": [0, 2] }, // urutan pemain yang mencapai tiap milestone (500 .. target-1)
     history: [ /* Event[] */ ], // riwayat perubahan skor (maks. 500 entri)
     gameActive: true,           // false setelah ada pemenang
     winner:  null               // { player, score, at } bila sudah selesai
@@ -353,7 +388,7 @@ TEST 1 — State awal
   ✓ terdiri dari 4 pemain dengan skor 0
   ...
 ----------------------------------------------------------------
-SEMUA LULUS — 66 pengujian berhasil.
+SEMUA LULUS — 80 pengujian berhasil.
 ```
 
 ```
@@ -418,16 +453,20 @@ yang benar-benar dipakai aplikasi** — bukan salinan yang bisa menyimpang.
 | TEST 2 | Kenaikan/penurunan skor dan pencatatan riwayat. |
 | TEST 3 | Validasi input: `50`, `+50`, `-50`, spasi, huruf, desimal, `0`, batas maksimum, serta normalisasi varian Unicode (`−50` U+2212, `–50` U+2013, `－５０` fullwidth, spasi/NBSP/zero-width). |
 | TEST 4 | Penolakan `bad-amount` dan `bad-player` tanpa mengubah state. |
-| TEST 5 | Pencatatan milestone 500–999 dan urutan pencapaian. |
-| TEST 6 | Seri **bukan** overtake. |
-| TEST 7 | **Reset berbasis rentang 500–999**: pemain yang benar-benar dilewati lawan direset ke 0 beserta jejaknya di riwayat, sementara `reach` tetap utuh. |
-| TEST 8 | Reset **semua** pemain di rentang 500–999 yang dilewati (bukan hanya pemain pertama): beberapa pemain direset dalam satu aksi, pemain yang datang belakangan tetap direset, dan sesama pencatat dalam satu ronde tidak saling mereset (skenario A = 550, B = 600, C 450 → 750). |
+| TEST 5 | Pencatatan milestone 500 .. (target−1) dan urutan pencapaian (default target 1000 → 500–999). |
+| TEST 6 | Seri **bukan** overtake; skor yang **turun** tidak dianggap menyalip; penyerang harus berakhir di atas lawan. |
+| TEST 7 | **Reset berbasis rentang milestone**: pemain yang benar-benar dilewati lawan direset ke 0 beserta jejaknya di riwayat, sementara `reach` tetap utuh. |
+| TEST 8 | Reset **semua** pemain di rentang yang dilewati (bukan hanya pemain pertama): beberapa pemain direset dalam satu aksi, pemain yang datang belakangan tetap direset bila benar-benar dilewati, dan sesama pencatat dalam satu ronde tidak saling mereset (skenario A = 550, B = 600, C 450 → 750). |
 | TEST 9 | Batas rentang milestone (499 vs 500). |
 | TEST 10 | Kemenangan pada 1000 poin dan penguncian input. |
 | TEST 11 | Ranking dan tie-breaker deterministik. |
 | TEST 12 | Riwayat berurutan dan batas `HISTORY_LIMIT`. |
 | TEST 13 | Dekoder base64 internal (`base64ToBytes`): padding, newline, penolakan input tidak valid, dan hasil samakan dengan `Buffer` bawaan Node (termasuk header PNG). |
-| TEST 14 | Statistik pemain & badge **Pengocok Handal**: hitungan **Ngocok** (jumlah ronde di mana pemain berada di posisi **TOTAL skor terendah** — dihitung dari **total skor berjalan**, **bukan** skor rondenya, dan berlaku untuk **semua pemain termasuk yang tidak mencatat skor** di ronde itu; semua ronde berskor dihitung, **termasuk ronde satu pencatat** — satu kali **[Perbarui]** = satu ronde; seri +1) dan **Skor Shutout** (250/300); badge Handal = **SATU** pemain yang **paling lama berada di total skor terendah ≥ 4 ronde** (rentetan terpanjang menang; seri panjang → index terkecil; **seri di posisi terendah TETAP dihitung**, sedangkan ronde "semua pemain seri" **memutus** rentetan sekaligus tidak menambah Ngocok kepada siapa pun). `computePlayerStats` juga mengembalikan **`candidate`/`candidateStreak`** — rentetan terpanjang walau **belum** menembus ambang (untuk **pemimpin sementara** di layar Statistik). |
+| TEST 14 | Statistik pemain & badge **Pengocok Handal**: hitungan **Ngocok** (jumlah ronde di mana pemain berada di posisi **TOTAL skor terendah** — dihitung dari **total skor berjalan**, **bukan** skor rondenya, dan berlaku untuk **semua pemain termasuk yang tidak mencatat skor** di ronde itu; semua ronde berskor dihitung, **termasuk ronde satu pencatat** — satu kali **[Perbarui]** = satu ronde; seri +1) dan **Skor Shutout** (250/300); badge Handal = **SATU** pemain yang **paling lama berada di total skor terendah ≥ 4 ronde** (rentetan terpanjang menang; seri panjang → index terkecil; **seri di posisi terendah TETAP dihitung**, sedangkan ronde "semua pemain seri" **memutus** rentetan sekaligus tidak menambah Ngocok kepada siapa pun). `computePlayerStats` juga mengembalikan **`candidate`/`candidateStreak`** — rentetan terpanjang walau **belum** menembus ambang (untuk **pemimpin sementara** di layar Statistik), serta **`currentStreak`/`needed`** — rentetan yang sedang berjalan dan sisa ngocok berturut-turut untuk menggantikan predikat (metrik **Butuh**). |
+| TEST 15 | Reset **hanya** untuk overtake asli & pemain yang **"dikejar"**: A 550 lalu B menyusul 550, ronde A −35 & B −40 → **tidak ada reset**; ronde A −40 & B −35 → **A reset**; A 650 & B 645 lalu A −40 & B −25 → **A reset**; pola yang sama untuk 4 pemain (hanya pemilik pertama yang tertinggal yang reset). |
+| TEST 16 | **Rentang milestone mengikuti target poin** (bukan hardcode 999): target 1000 → 500–999, target 1500 → 500–1499 (milestone 1010 tetap dicatat & bisa memicu reset), target 800 → 500–799. |
+| TEST 17 | Statistik **Butuh**: belum ada penyandang → `4 − rentetan aktif`; sudah ada penyandang → `rentetan penyandang + 1 − rentetan aktif`; rekor penyandang tetap menjadi target walau rentetannya sudah terputus. |
+| TEST 18 | **MVP** (`computeMvp`): pemain dengan **Skor Shutout (250/300) terbanyak**; belum ada shutout → `players: []` (kartu netral); shutout terbanyak **seri** → semua pemain itu jadi MVP (urut index); masukan kosong/`null` tidak membuat crash; diuji juga dari `perfect` hasil `computePlayerStats`. |
 | QUICK SCORE §34 | Preset `-35 → -40 → +250 → +300` pada skor 0 menghasilkan `-35 → -75 → 175 → 475`, lengkap dengan riwayat & penyimpanan. |
 
 ### Uji DOM — `tests/dom.test.js`
@@ -468,16 +507,16 @@ Uji ini memverifikasi **aplikasi yang benar-benar dirender**, bukan salinan:
 | DOM 2 | Klik tombol skor cepat: skor, progress bar, kelas `is-negative`, riwayat, penyimpanan, urutan preset (QUICK SCORE §34), serta milestone/reset lewat tombol cepat. |
 | DOM 3 | Input manual: tombol Perbarui, tombol Enter, penolakan input tidak valid, tombol **±** (termasuk keadaan kosong & penguncian setelah menang), serta penerimaan minus Unicode/en dash/angka fullwidth. |
 | DOM 4 | Banner RESET beserta penjelasannya, kartu direset, seri tidak me-reset, auto-hilang 12 detik. |
-| DOM 5 | Modal hasil otomatis: **kartu Pemenang** + **kartu Pengocok Handal** (penyandang + `N×`, atau bergaya netral `Belum ada` bila belum ada rentetan ≥ 4 ronde) dan **ranking `#n`**; dibuka dengan **logo kartu + wordmark `Remiku`** (`Remi` + `ku`) dan baris **`versi · zkvoid`** (dari `APP_VERSION`); skor negatif di ranking ditandai `is-negative`, penguncian **semua** input & tombol, penolakan skor setelah menang. |
+| DOM 5 | Modal hasil otomatis: **kartu Pemenang** (ikon piala **SVG**) + **kartu Pengocok Handal** (ikon dua kartu **SVG**; penyandang + `N×`, atau bergaya netral `Belum ada` bila belum ada rentetan ≥ 4 ronde) + **kartu MVP** (ikon bintang **SVG**; pemain dengan shutout 250/300 terbanyak, atau `Belum ada`) yang **berdampingan dalam `.award-grid` 2 kolom**, dan **ranking `#n`**; dibuka dengan **logo kartu + wordmark `Remiku`** (`Remi` + `ku`) dan baris **`versi · zkvoid`** (dari `APP_VERSION`); skor negatif di ranking ditandai `is-negative`, penguncian **semua** input & tombol, penolakan skor setelah menang. |
 | DOM 6 | Persistensi: skor, riwayat, layar hasil, dan kunci input bertahan setelah refresh; data rusak tidak mematikan aplikasi. |
 | DOM 7 | Permainan baru (tombol kini di layar Pengaturan): dialog konfirmasi, batal, nama dipertahankan, kunci input dibuka lagi. |
 | DOM 8 | Nama pemain: pembaruan langsung tanpa mengubah skor, fallback nama kosong, Escape. |
 | DOM 9 | Modal: riwayat lengkap, Escape hanya menutup modal teratas, klik backdrop, kelas `modal-open`. |
 | DOM 10 | Hapus riwayat tidak menghapus skor. |
 | DOM 11 | Jalur bootstrap cadangan (`readyState` `loading` vs `complete`). |
-| DOM 12 | Simpan Hasil: PNG dibuat **sinkron** lewat `toDataURL` (bukan `toBlob`) dan unduhan `.png` terpicu di dalam satu klik; `navigator.share` di perangkat sentuh dipanggil **masih di dalam gestur klik**, gagal share jatuh ke unduhan (tanpa klaim palsu), batal share mengunduh tidak memaksa, desktop dengan *pointer* halus selalu mengunduh; tanpa pemenang tidak ada unduhan. |
-| DOM 13 | Gambar hasil (PNG) juga memuat **logo + wordmark `Remiku`** dan baris **`versi · zkvoid`**, serta statistik lengkap: judul **STATISTIK LENGKAP**, callout **Pengocok Handal**, dan label **NGOCOK / SHUTOUT** per pemain (kolom **TERENDAH** dipastikan **tidak** digambar lagi) — berasal dari data statistik yang sama dengan kartu Hasil & layar Statistik. |
-| DOM 14 | Layar Statistik: callout **Pengocok Handal** tampil dengan penyandangnya (badge pink + `N×`) saat sudah ada rentetan ≥ 4 ronde, dan menampilkan **pemimpin sementara** (**Kandidat Pengocok Handal** + "belum memenuhi syarat") saat belum ada. |
+| DOM 12 | Simpan Hasil: PNG dibuat **sinkron** lewat `toDataURL` (bukan `toBlob`) dan unduhan `.png` terpicu di dalam satu klik; berkas **langsung tersimpan ke perangkat** — `navigator.share`/`canShare` **tidak pernah** dipanggil walau perangkat sentuh mendukungnya, toast berbunyi **"Gambar hasil disimpan."** (bukan "dibagikan"); tanpa pemenang tidak ada unduhan. |
+| DOM 13 | Gambar hasil (PNG) juga memuat **logo + wordmark `Remiku`** dan baris **`versi · zkvoid`**, **chip ikon piala** di kotak pemenang, **dua kartu penghargaan** (Pengocok Handal + MVP, termasuk jumlah shutout), serta statistik lengkap: judul **STATISTIK LENGKAP** dan label **NGOCOK / SHUTOUT / BUTUH** per pemain (kolom **TERENDAH** dipastikan **tidak** digambar lagi) — berasal dari data statistik yang sama dengan kartu Hasil & layar Statistik. Semua ikon digambar sebagai **vektor (path canvas)**, jadi **tidak ada emoji** yang tercetak ke kanvas. |
+| DOM 14 | Layar Statistik: callout **Pengocok Handal** tampil dengan penyandangnya (badge pink + `N×`) saat sudah ada rentetan ≥ 4 ronde, dan menampilkan **pemimpin sementara** (**Kandidat Pengocok Handal** + "belum memenuhi syarat") saat belum ada; tiap baris pemain punya metrik **Ngocok / Shutout / Butuh**. |
 
 ### Menjalankan di CI (contoh GitHub Actions)
 
@@ -555,10 +594,8 @@ serta iOS 15+ dan Android 10+. Fitur berikut memiliki *fallback* otomatis:
 | --- | --- |
 | `canvas.toBlob()` | tidak dipakai lagi: PNG dibuat **sinkron** lewat `canvas.toDataURL()` agar izin gestur pengguna tetap aktif |
 | `canvas.roundRect()` | digambar manual dengan `arcTo()` |
-| `navigator.share()` | otomatis beralih ke unduhan file |
-| `navigator.canShare()` | langsung memakai unduhan |
-| `window.matchMedia()` / `File` / `Blob` | langsung memakai unduhan (data URL) |
 | `atob()` saat membentuk berkas PNG | dekoder base64 internal (`base64ToBytes`), tanpa dependensi |
+| `URL.createObjectURL()` / `Blob` | unduhan memakai data URL (`<a download>`) |
 | Service Worker | dilewati bila tidak didukung atau pada protokol `file:` |
 | `localStorage` | aplikasi tetap jalan, hanya tanpa penyimpanan |
 
@@ -575,7 +612,7 @@ sehingga dapat dimuat langsung sebagai `<script defer>`.
 | PWA tidak bisa dipasang | Halaman harus diakses lewat `https://` atau `http://localhost`. |
 | Skor tidak tersimpan | `localStorage` diblokir (mode privat / pengaturan situs). |
 | Tombol **Simpan Hasil** tidak bereaksi | Gambar dibuat **sinkron** di dalam ketukan; bila masih gagal, pastikan ekstensi privasi tidak mematikan Canvas API. Pesan di layar tidak lagi menyesatkan: kegagalan selalu memunculkan toast error. |
-| Tombol **Simpan Hasil** tidak mengunduh di ponsel | Di iOS/Android gambar dibagikan lewat *share sheet*; pilih **Save Image** / **Simpan ke Galeri**. |
+| Tombol **Simpan Hasil** tidak mengunduh di ponsel | Berkas disimpan ke folder **Unduhan**/*Downloads* (iOS: **Files → Downloads**) dengan nama `remiku-hasil-YYYY-MM-DD.png`. Tidak ada *share sheet* yang perlu dikonfirmasi — bila belum terlihat, periksa folder unduhan peramban. |
 | Skor negatif tidak bisa diketik di ponsel | Keypad numerik tidak punya tombol minus: ketuk tombol **±** di dalam kolom skor, atau tempel `-25` (varian minus Unicode otomatis dinormalkan). |
 | `node: command not found` | Pasang Node.js 18+ hanya bila ingin menjalankan uji otomatis; aplikasi sendiri tidak memerlukannya. |
 
